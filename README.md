@@ -30,8 +30,32 @@ Use Python 3.11 or newer.
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,kaggle]"
 ```
+## Data
+
+The implementation dataset is DAIGT v2:
+`thedrcat/daigt-v2-train-dataset`.
+
+With Kaggle credentials configured:
+
+```bash
+python -m isogram.data.prepare --download
+```
+
+Keep Kaggle credentials outside the repository, preferably in
+`~/.kaggle/kaggle.json`. The repo ignores `kaggle.json` and `.env` files as a
+backup guard.
+
+Or download the dataset manually from Kaggle, place the CSV under
+`data/raw/daigt-v2/`, then run:
+
+```bash
+python -m isogram.data.prepare --raw-path data/raw/daigt-v2
+```
+
+Preparation writes deterministic 80/20 stratified splits to
+`data/processed/train.csv` and `data/processed/val.csv`.
 ## Tests
 
 ```bash
