@@ -12,7 +12,9 @@ license = { file = "LICENSE" }
 dependencies = [
     "numpy>=1.26,<3.0",
     "pandas>=2.2,<3.0",
+    "sentencepiece>=0.2,<1.0",
     "torch>=2.3,<3.0",
+    "transformers>=4.40,<5.0",
 ]
 
 [project.optional-dependencies]
@@ -22,6 +24,11 @@ dev = [
 kaggle = [
     "kaggle>=1.6,<2.0",
 ]
+
+[project.scripts]
+isogram-prepare = "isogram.data.prepare:main"
+isogram-train = "isogram.train:main"
+isogram-evaluate = "isogram.evaluate:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
