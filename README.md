@@ -56,6 +56,23 @@ python -m isogram.data.prepare --raw-path data/raw/daigt-v2
 
 Preparation writes deterministic 80/20 stratified splits to
 `data/processed/train.csv` and `data/processed/val.csv`.
+## Training
+
+Train the lightweight PyTorch baseline first:
+
+```bash
+python -m isogram.train --model char_cnn
+```
+
+Then fine-tune DeBERTa with a custom PyTorch classification head:
+
+```bash
+python -m isogram.train --model deberta --batch-size 8 --amp
+```
+
+Both commands write checkpoints under `artifacts/checkpoints/` and metrics under
+`reports/`. The DeBERTa implementation uses `microsoft/deberta-v3-base` only as
+a tokenizer and pretrained encoder.
 ## Tests
 
 ```bash
