@@ -73,6 +73,16 @@ python -m isogram.train --model deberta --batch-size 8 --amp
 Both commands write checkpoints under `artifacts/checkpoints/` and metrics under
 `reports/`. The DeBERTa implementation uses `microsoft/deberta-v3-base` only as
 a tokenizer and pretrained encoder.
+## Evaluation
+
+```bash
+python -m isogram.evaluate \
+  --checkpoint artifacts/checkpoints/deberta_best.pt \
+  --data data/processed/val.csv
+```
+
+The report includes ROC-AUC, PR-AUC, precision, recall, F1, Brier score, and the
+selected threshold.
 ## Tests
 
 ```bash
