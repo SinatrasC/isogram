@@ -83,6 +83,19 @@ python -m isogram.evaluate \
 
 The report includes ROC-AUC, PR-AUC, precision, recall, F1, Brier score, and the
 selected threshold.
+## Serving
+
+```bash
+python -m isogram.serve --checkpoint artifacts/checkpoints/deberta_best.pt
+```
+
+Open `http://127.0.0.1:8000` for the minimal UI, or call the API:
+
+```bash
+curl -X POST http://127.0.0.1:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{"text":"This essay argues that careful source evaluation matters."}'
+```
 ## Tests
 
 ```bash

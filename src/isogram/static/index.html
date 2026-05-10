@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Isogram</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #172026;
+        background: #f5f7f8;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+      }
+      main {
+        width: min(920px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 40px 0;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 32px;
+        font-weight: 720;
+      }
+      p {
+        margin: 0 0 24px;
+        color: #52616b;
+      }
+      .workspace {
+        display: grid;
+        gap: 16px;
+      }
+      textarea {
+        min-height: 260px;
+        resize: vertical;
+        border: 1px solid #cad3d8;
+        border-radius: 8px;
+        padding: 14px;
+        font: inherit;
+        line-height: 1.5;
+        background: #ffffff;
+      }
+      .actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      button {
+        border: 0;
+        border-radius: 8px;
+        padding: 10px 16px;
+        background: #175cd3;
+        color: #ffffff;
+        font: inherit;
+        font-weight: 650;
+        cursor: pointer;
+      }
+      button:disabled {
+        background: #9aa8b3;
+        cursor: wait;
+      }
+      output {
+        min-height: 24px;
+        font-weight: 650;
+      }
+      .error {
+        color: #b42318;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Isogram</h1>
+      <p>AI-generated essay detection</p>
+      <section class="workspace">
+        <textarea id="text" placeholder="Paste an essay here"></textarea>
+        <div class="actions">
+          <button id="submit" type="button">Predict</button>
+          <output id="result"></output>
+        </div>
+      </section>
+    </main>
+    <script>
+      const button = document.querySelector("#submit");
+      const text = document.querySelector("#text");
+      const result = document.querySelector("#result");
+
+      button.addEventListener("click", async () => {
+        result.className = "";
+        result.textContent = "";
+        button.disabled = true;
+        try {
+          const response = await fetch("/predict", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: text.value }),
+          });
+          if (!response.ok) {
+            throw new Error("Request failed");
+          }
+          const payload = await response.json();
+          const percentage = (payload.prob_ai * 100).toFixed(1);
+          result.textContent = `${percentage}% AI probability (${payload.model_version})`;
+        } catch (error) {
+          result.className = "error";
+          result.textContent = "Prediction failed";
+        } finally {
+          button.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>
