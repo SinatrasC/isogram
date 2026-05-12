@@ -96,6 +96,11 @@ curl -X POST http://127.0.0.1:8000/predict \
   -H "Content-Type: application/json" \
   -d '{"text":"This essay argues that careful source evaluation matters."}'
 ```
+## Docker
+
+```bash
+ISOGRAM_CHECKPOINT=artifacts/checkpoints/deberta_best.pt docker compose up --build
+```
 ## Tests
 
 ```bash

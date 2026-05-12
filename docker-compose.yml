@@ -1,0 +1,10 @@
+services:
+  api:
+    build: .
+    environment:
+      ISOGRAM_CHECKPOINT: ${ISOGRAM_CHECKPOINT:-/app/artifacts/checkpoints/deberta_best.pt}
+      ISOGRAM_DEVICE: ${ISOGRAM_DEVICE:-auto}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./artifacts:/app/artifacts:ro

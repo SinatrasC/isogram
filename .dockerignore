@@ -1,0 +1,43 @@
+.git
+.gitignore
+.dockerignore
+.venv
+env
+venv
+__pycache__
+*.py[cod]
+*.egg-info
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+htmlcov
+
+# Local data and model artifacts are mounted at runtime, not baked into image.
+/artifacts
+/data
+/models
+/checkpoints
+/outputs
+/runs
+/wandb
+/mlruns
+/reports
+
+# Credentials and local config
+.env
+.env.*
+!.env.example
+kaggle.json
+**/kaggle.json
+.kaggle
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Development-only files
+tests
+scripts/load_test.py
+docker-compose.override.yml
