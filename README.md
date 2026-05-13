@@ -83,6 +83,13 @@ python -m isogram.evaluate \
 
 The report includes ROC-AUC, PR-AUC, precision, recall, F1, Brier score, and the
 selected threshold.
+
+Current DAIGT v2 validation results from the saved reports:
+
+| Model | ROC-AUC | PR-AUC | Precision | Recall | F1 | Brier |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Char CNN | 0.9991 | 0.9990 | 0.9937 | 0.9857 | 0.9897 | 0.0073 |
+| DeBERTa v3 base | 0.9997 | 0.9997 | 0.9989 | 0.9960 | 0.9974 | 0.0081 |
 ## Serving
 
 ```bash

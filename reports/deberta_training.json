@@ -1,0 +1,68 @@
+{
+  "best_metrics": {
+    "brier_score": 0.00808977551392397,
+    "epoch": 2,
+    "f1": 0.9974241556954779,
+    "false_negative": 14,
+    "false_positive": 4,
+    "pr_auc": 0.9996884776937524,
+    "precision": 0.9988535396961881,
+    "recall": 0.9959988568162332,
+    "roc_auc": 0.999740783655292,
+    "threshold": 0.9832239151000977,
+    "train_loss": 0.012750995235514533,
+    "true_negative": 5469,
+    "true_positive": 3485
+  },
+  "checkpoint": "artifacts/checkpoints/deberta_best.pt",
+  "device": "cuda",
+  "history": [
+    {
+      "brier_score": 0.017268134782189377,
+      "epoch": 1,
+      "f1": 0.9957044673539519,
+      "false_negative": 22,
+      "false_positive": 8,
+      "pr_auc": 0.9992831815675036,
+      "precision": 0.9977044476327116,
+      "recall": 0.9937124892826522,
+      "roc_auc": 0.999337259420052,
+      "threshold": 0.9981253743171692,
+      "train_loss": 0.029431159263419385,
+      "true_negative": 5465,
+      "true_positive": 3477
+    },
+    {
+      "brier_score": 0.00808977551392397,
+      "epoch": 2,
+      "f1": 0.9974241556954779,
+      "false_negative": 14,
+      "false_positive": 4,
+      "pr_auc": 0.9996884776937524,
+      "precision": 0.9988535396961881,
+      "recall": 0.9959988568162332,
+      "roc_auc": 0.999740783655292,
+      "threshold": 0.9832239151000977,
+      "train_loss": 0.012750995235514533,
+      "true_negative": 5469,
+      "true_positive": 3485
+    },
+    {
+      "brier_score": 0.006706394934324911,
+      "epoch": 3,
+      "f1": 0.9981394017460998,
+      "false_negative": 12,
+      "false_positive": 1,
+      "pr_auc": 0.9996837757231287,
+      "precision": 0.9997133027522935,
+      "recall": 0.9965704486996285,
+      "roc_auc": 0.9996990604765205,
+      "threshold": 0.9837010502815247,
+      "train_loss": 0.007822468193107874,
+      "true_negative": 5472,
+      "true_positive": 3487
+    }
+  ],
+  "model": "deberta",
+  "model_version": "deberta-v1"
+}
