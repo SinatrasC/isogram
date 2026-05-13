@@ -8,3 +8,13 @@ services:
       - "8000:8000"
     volumes:
       - ./artifacts:/app/artifacts:ro
+
+  loadtest:
+    image: node:20-alpine
+    profiles: ["loadtest"]
+    working_dir: /app
+    command: ["node", "scripts/load_test.js", "--url", "http://api:8000/predict"]
+    depends_on:
+      - api
+    volumes:
+      - ./scripts:/app/scripts:ro

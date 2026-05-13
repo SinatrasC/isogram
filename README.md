@@ -101,8 +101,34 @@ curl -X POST http://127.0.0.1:8000/predict \
 ```bash
 ISOGRAM_CHECKPOINT=artifacts/checkpoints/deberta_best.pt docker compose up --build
 ```
+## Latency Check
+
+Run the service first, then:
+
+```bash
+python scripts/load_test.py --url http://127.0.0.1:8000/predict --requests 50
+```
+
+The proposal mentions a Node.js latency script, so the same check is available
+without extra npm dependencies:
+
+```bash
+node scripts/load_test.js --url http://127.0.0.1:8000/predict --requests 50
+```
+
+With Docker Compose:
+
+```bash
+ISOGRAM_CHECKPOINT=artifacts/checkpoints/deberta_best.pt \
+  docker compose --profile loadtest up --build
+```
+
+The proposal target is median latency below 5 seconds on CPU and below 1 second
+on GPU for a single essay.
 ## Tests
 
 ```bash
 pytest
 ```
+
+The tests use tiny fixtures and do not require the real DAIGT v2 dataset.
