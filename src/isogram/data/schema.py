@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -8,7 +9,14 @@ import pandas as pd
 
 TEXT_COLUMNS = ("text", "essay", "full_text", "content")
 LABEL_COLUMNS = ("generated", "label", "target", "is_generated")
-OPTIONAL_METADATA_COLUMNS = ("prompt_name", "prompt", "source", "model")
+OPTIONAL_METADATA_COLUMNS = (
+    "prompt_name",
+    "prompt",
+    "source",
+    "model",
+    "source_dataset",
+    "source_split",
+)
 
 
 def find_text_column(frame: pd.DataFrame) -> str:
@@ -41,7 +49,7 @@ def normalize_label(value: object) -> int:
         if label not in {0, 1}:
             raise ValueError(f"Label must be binary, got {value!r}")
         return label
-    label = int(value)
+    label = int(cast(Any, value))
     if label not in {0, 1}:
         raise ValueError(f"Label must be binary, got {value!r}")
     return label
@@ -100,6 +108,86 @@ def stratified_train_val_split(
     if train.empty or val.empty:
         raise ValueError("Split produced an empty train or validation set")
     return train, val
+
+
+def sample_balanced_by_label(
+    frame: pd.DataFrame,
+    *,
+    max_rows: int | None,
+    seed: int,
+) -> pd.DataFrame:
+    if max_rows is None or max_rows >= len(frame):
+        return frame.sample(frac=1.0, random_state=seed).reset_index(drop=True)
+    if max_rows < 2:
+        raise ValueError("max_rows must be at least 2 for a binary dataset")
+
+    labels = sorted(int(label) for label in frame["label"].unique())
+    if set(labels) != {0, 1}:
+        raise ValueError("Balanced sampling expects binary labels 0 and 1")
+
+    rng = np.random.default_rng(seed)
+    target_by_label = {0: max_rows // 2, 1: max_rows - (max_rows // 2)}
+    sampled_indices: list[int] = []
+    remaining_indices: list[int] = []
+
+    for label in labels:
+        group_indices = frame.index[frame["label"] == label].to_numpy()
+        rng.shuffle(group_indices)
+        target = min(target_by_label[label], len(group_indices))
+        sampled_indices.extend(group_indices[:target].tolist())
+        remaining_indices.extend(group_indices[target:].tolist())
+
+    if len(sampled_indices) < max_rows and remaining_indices:
+        remaining = np.array(remaining_indices)
+        rng.shuffle(remaining)
+        sampled_indices.extend(remaining[: max_rows - len(sampled_indices)].tolist())
+
+    rng.shuffle(sampled_indices)
+    return frame.loc[sampled_indices].reset_index(drop=True)
+
+
+def stratified_train_val_test_split(
+    frame: pd.DataFrame,
+    *,
+    val_fraction: float,
+    test_fraction: float,
+    seed: int,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    if not 0.0 < val_fraction < 1.0:
+        raise ValueError("val_fraction must be between 0 and 1")
+    if not 0.0 < test_fraction < 1.0:
+        raise ValueError("test_fraction must be between 0 and 1")
+    if val_fraction + test_fraction >= 1.0:
+        raise ValueError("val_fraction + test_fraction must be below 1")
+
+    rng = np.random.default_rng(seed)
+    train_indices: list[int] = []
+    val_indices: list[int] = []
+    test_indices: list[int] = []
+
+    for _, group in frame.groupby("label", sort=True):
+        indices = group.index.to_numpy()
+        rng.shuffle(indices)
+
+        test_count = max(1, int(round(len(indices) * test_fraction)))
+        val_count = max(1, int(round(len(indices) * val_fraction)))
+        if test_count + val_count >= len(indices):
+            test_count = max(1, min(test_count, len(indices) - 2))
+            val_count = max(1, min(val_count, len(indices) - test_count - 1))
+
+        test_indices.extend(indices[:test_count].tolist())
+        val_indices.extend(indices[test_count : test_count + val_count].tolist())
+        train_indices.extend(indices[test_count + val_count :].tolist())
+
+    rng.shuffle(train_indices)
+    rng.shuffle(val_indices)
+    rng.shuffle(test_indices)
+    train = frame.loc[train_indices].reset_index(drop=True)
+    val = frame.loc[val_indices].reset_index(drop=True)
+    test = frame.loc[test_indices].reset_index(drop=True)
+    if train.empty or val.empty or test.empty:
+        raise ValueError("Split produced an empty train, validation, or test set")
+    return train, val, test
 
 
 def find_csv(raw_path: Path) -> Path:

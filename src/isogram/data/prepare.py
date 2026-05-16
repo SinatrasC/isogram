@@ -11,6 +11,7 @@ import pandas as pd
 
 from isogram.config import CommonPaths, TrainingDefaults, dataclass_to_jsonable, write_json
 from isogram.data.schema import find_csv, normalize_frame, stratified_train_val_split
+from isogram.data.splits import Split
 
 
 def download_with_kaggle(dataset: str, raw_dir: Path) -> None:
@@ -49,8 +50,8 @@ def prepare_dataset(
     train, val = stratified_train_val_split(normalized, val_fraction=val_fraction, seed=seed)
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    train_path = output_dir / "train.csv"
-    val_path = output_dir / "val.csv"
+    train_path = output_dir / Split.TRAIN.filename
+    val_path = output_dir / Split.VAL.filename
     train.to_csv(train_path, index=False)
     val.to_csv(val_path, index=False)
 

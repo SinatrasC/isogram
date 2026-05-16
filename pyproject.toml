@@ -32,8 +32,12 @@ dev = [
 kaggle = [
     "kaggle>=1.6,<2.0",
 ]
+hf = [
+    "datasets>=2.20,<4.0",
+]
 
 [project.scripts]
+isogram-build-dataset = "isogram.data.build_dataset:main"
 isogram-prepare = "isogram.data.prepare:main"
 isogram-train = "isogram.train:main"
 isogram-evaluate = "isogram.evaluate:main"
