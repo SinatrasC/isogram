@@ -1,0 +1,32 @@
+data:
+  seed: 42
+  output_dir: data/processed/merged
+  local_path: data/raw/daigt-v2
+  local_source_name: drcat-v2
+  local_license: apache-2.0
+  hf_dataset: srikanthgali/ai-text-detection-pile-cleaned
+  hf_split: train
+  hf_license: mit
+  hf_sample_rows: 60000
+  hf_shuffle_buffer: 10000
+  val_fraction: 0.1
+  test_fraction: 0.1
+
+training:
+  dataset:
+    train: data/processed/merged/train.csv
+    val: data/processed/merged/val.csv
+    test: data/processed/merged/test.csv
+  char_cnn:
+    epochs: 5
+    batch_size: 64
+    learning_rate: 0.001
+  deberta:
+    epochs: 1
+    batch_size: 16
+    learning_rate: 0.00002
+    amp: true
+
+mlflow:
+  tracking_uri: file:mlruns
+  experiment: isogram

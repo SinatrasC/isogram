@@ -1,0 +1,31 @@
+stages:
+  build_dataset:
+    cmd: >-
+      python -m isogram.data.build_dataset
+      --local-path ${data.local_path}
+      --local-source-name ${data.local_source_name}
+      --local-license ${data.local_license}
+      --hf-dataset ${data.hf_dataset}
+      --hf-split ${data.hf_split}
+      --hf-license ${data.hf_license}
+      --hf-sample-rows ${data.hf_sample_rows}
+      --hf-shuffle-buffer ${data.hf_shuffle_buffer}
+      --output-dir ${data.output_dir}
+      --val-fraction ${data.val_fraction}
+      --test-fraction ${data.test_fraction}
+      --seed ${data.seed}
+    deps:
+      - src/isogram/data/build_dataset.py
+      - src/isogram/data/schema.py
+      - src/isogram/data/splits.py
+      - data/raw/daigt-v2/train_v2_drcat_02.csv
+    params:
+      - data
+    outs:
+      - ${data.output_dir}/all.csv
+      - ${data.output_dir}/train.csv
+      - ${data.output_dir}/val.csv
+      - ${data.output_dir}/test.csv
+    metrics:
+      - ${data.output_dir}/metadata.json:
+          cache: false

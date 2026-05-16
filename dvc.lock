@@ -1,0 +1,61 @@
+schema: '2.0'
+stages:
+  build_dataset:
+    cmd: python -m isogram.data.build_dataset --local-path data/raw/daigt-v2
+      --local-source-name drcat-v2 --local-license apache-2.0 --hf-dataset
+      srikanthgali/ai-text-detection-pile-cleaned --hf-split train --hf-license
+      mit --hf-sample-rows 60000 --hf-shuffle-buffer 10000 --output-dir
+      data/processed/merged --val-fraction 0.1 --test-fraction 0.1 --seed 42
+    deps:
+    - path: data/raw/daigt-v2/train_v2_drcat_02.csv
+      hash: md5
+      md5: df3047e59f65015b0a68ece21de0e6e3
+      size: 101908038
+    - path: src/isogram/data/build_dataset.py
+      hash: md5
+      md5: b962e8d9411f131f037ca0dbcf54dc8e
+      size: 11738
+    - path: src/isogram/data/schema.py
+      hash: md5
+      md5: 6e13a66ecac34cbaf372ba2b43ac0a90
+      size: 7397
+    - path: src/isogram/data/splits.py
+      hash: md5
+      md5: e7d30512e7dee75e2cdb0288a6255e53
+      size: 236
+    params:
+      params.yaml:
+        data:
+          seed: 42
+          output_dir: data/processed/merged
+          local_path: data/raw/daigt-v2
+          local_source_name: drcat-v2
+          local_license: apache-2.0
+          hf_dataset: srikanthgali/ai-text-detection-pile-cleaned
+          hf_split: train
+          hf_license: mit
+          hf_sample_rows: 60000
+          hf_shuffle_buffer: 10000
+          val_fraction: 0.1
+          test_fraction: 0.1
+    outs:
+    - path: data/processed/merged/all.csv
+      hash: md5
+      md5: 7c9fd1f1a03f976e9f0e0fb8e47ef7f3
+      size: 242654388
+    - path: data/processed/merged/metadata.json
+      hash: md5
+      md5: 6ff689df3148e3bbbb34ad538c49dbbb
+      size: 1310
+    - path: data/processed/merged/test.csv
+      hash: md5
+      md5: 442268f4071d71816bee8b1cb1940980
+      size: 24386960
+    - path: data/processed/merged/train.csv
+      hash: md5
+      md5: 8d9acd5a68fa00642631b6374248b36c
+      size: 194080952
+    - path: data/processed/merged/val.csv
+      hash: md5
+      md5: db3a36aa7b9d26456fafab280df90046
+      size: 24186528
