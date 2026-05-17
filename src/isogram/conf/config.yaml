@@ -1,0 +1,26 @@
+defaults:
+  - dataset: merged
+  - model: char_cnn
+  - _self_
+
+paths:
+  output: artifacts/checkpoints/${model.name}_${dataset.name}.pt
+  report_output: reports/${model.name}_${dataset.name}_training.json
+  run_config_dir: reports/run_configs
+
+training:
+  seed: 42
+  device: auto
+  grad_accum_steps: 1
+  log_every: 50
+  limit_rows: null
+
+mlflow:
+  enabled: true
+  tracking_uri: file:mlruns
+  experiment: isogram
+  run_name: ${model.name}-${dataset.name}
+
+hydra:
+  job:
+    chdir: false

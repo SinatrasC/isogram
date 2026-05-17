@@ -1,0 +1,5 @@
+name: merged
+train: data/processed/merged/train.csv
+val: data/processed/merged/val.csv
+test: data/processed/merged/test.csv
+metadata: data/processed/merged/metadata.json

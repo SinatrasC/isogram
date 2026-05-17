@@ -43,6 +43,7 @@ mlops = [
 
 [project.scripts]
 isogram-build-dataset = "isogram.data.build_dataset:main"
+isogram-train-hydra = "isogram.hydra_train:main"
 isogram-prepare = "isogram.data.prepare:main"
 isogram-train = "isogram.train:main"
 isogram-evaluate = "isogram.evaluate:main"
@@ -52,7 +53,7 @@ isogram-serve = "isogram.serve:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-isogram = ["static/*.html"]
+isogram = ["static/*.html", "conf/**/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
