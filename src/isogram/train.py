@@ -3,18 +3,20 @@ from __future__ import annotations
 import argparse
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 import pandas as pd
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
-from isogram.config import CommonPaths, TrainingDefaults, set_seed, write_json
 from isogram.checkpoint import save_checkpoint
+from isogram.config import CommonPaths, TrainingDefaults, set_seed, write_json
+from isogram.data.splits import Split
 from isogram.metrics import compute_classification_report
 from isogram.models.char_cnn import CharCnnClassifier, CharTokenizer
 from isogram.models.deberta import DebertaBatcher, DebertaTextClassifier
+from isogram.tracking import maybe_mlflow_run
 
 
 class TextCsvDataset(Dataset):
@@ -48,7 +50,10 @@ def make_collate_fn(
 ) -> Callable[[list[dict[str, object]]], dict[str, torch.Tensor]]:
     def collate(rows: list[dict[str, object]]) -> dict[str, torch.Tensor]:
         texts = [str(row["text"]) for row in rows]
-        labels = torch.tensor([int(row["label"]) for row in rows], dtype=torch.float32)
+        labels = torch.tensor(
+            [int(cast(int, row["label"])) for row in rows],
+            dtype=torch.float32,
+        )
         if model_type == "char_cnn":
             assert char_tokenizer is not None
             return {"input_ids": char_tokenizer.batch_encode(texts), "labels": labels}
@@ -153,7 +158,7 @@ def build_model_stack(args: argparse.Namespace) -> tuple[nn.Module, dict[str, An
             "kernel_sizes": tuple(args.char_kernel_sizes),
             "dropout": args.dropout,
         }
-        model = CharCnnClassifier(
+        model: nn.Module = CharCnnClassifier(
             vocab_size=tokenizer.vocab_size,
             embedding_dim=args.char_embedding_dim,
             channels=args.char_channels,
@@ -191,8 +196,8 @@ def build_parser() -> argparse.ArgumentParser:
     defaults = TrainingDefaults()
     parser = argparse.ArgumentParser(description="Train Isogram PyTorch models.")
     parser.add_argument("--model", choices=["char_cnn", "deberta"], required=True)
-    parser.add_argument("--train", type=Path, default=paths.processed_dir / "train.csv")
-    parser.add_argument("--val", type=Path, default=paths.processed_dir / "val.csv")
+    parser.add_argument("--train", type=Path, default=paths.processed_dir / Split.TRAIN.filename)
+    parser.add_argument("--val", type=Path, default=paths.processed_dir / Split.VAL.filename)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--report-output", type=Path)
     parser.add_argument("--model-version")
@@ -212,6 +217,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--char-kernel-sizes", type=int, nargs="+", default=[3, 5, 7])
     parser.add_argument("--deberta-model-name", default="microsoft/deberta-v3-base")
     parser.add_argument("--deberta-max-length", type=int, default=defaults.deberta_max_length)
+    parser.add_argument("--mlflow", action="store_true")
+    parser.add_argument("--mlflow-tracking-uri", default="file:mlruns")
+    parser.add_argument("--mlflow-experiment", default="isogram")
+    parser.add_argument("--mlflow-run-name")
+    parser.add_argument("--run-config", type=Path)
     return parser
 
 
@@ -271,53 +281,106 @@ def main(argv: list[str] | None = None) -> None:
     best_metrics: dict[str, Any] | None = None
     history: list[dict[str, Any]] = []
 
-    for epoch in range(1, args.epochs + 1):
-        train_loss = train_one_epoch(
-            model=model,
-            model_type=args.model,
-            loader=train_loader,
-            optimizer=optimizer,
-            criterion=criterion,
-            device=device,
-            amp=use_amp,
-            grad_accum_steps=args.grad_accum_steps,
-            log_every=args.log_every,
-        )
-        labels, scores = predict_scores(
-            model=model,
-            model_type=args.model,
-            loader=val_loader,
-            device=device,
-        )
-        metrics = compute_classification_report(labels, scores)
-        metrics["train_loss"] = train_loss
-        metrics["epoch"] = epoch
-        history.append(metrics)
+    with maybe_mlflow_run(
+        enabled=args.mlflow,
+        tracking_uri=args.mlflow_tracking_uri,
+        experiment_name=args.mlflow_experiment,
+        run_name=args.mlflow_run_name or args.model_version,
+        tags={"model": args.model, "model_version": args.model_version},
+    ) as mlflow_run:
+        if mlflow_run is not None:
+            mlflow_run.log_params(
+                {
+                    "model": args.model,
+                    "model_version": args.model_version,
+                    "train_path": args.train,
+                    "val_path": args.val,
+                    "rows_train": len(train_frame),
+                    "rows_val": len(val_frame),
+                    "device": str(device),
+                    "epochs": args.epochs,
+                    "batch_size": args.batch_size,
+                    "learning_rate": args.learning_rate,
+                    "grad_accum_steps": args.grad_accum_steps,
+                    "amp": use_amp,
+                    "limit_rows": args.limit_rows,
+                    "dropout": args.dropout,
+                    "char_max_length": args.char_max_length,
+                    "char_embedding_dim": args.char_embedding_dim,
+                    "char_channels": args.char_channels,
+                    "char_kernel_sizes": args.char_kernel_sizes,
+                    "deberta_model_name": args.deberta_model_name,
+                    "deberta_max_length": args.deberta_max_length,
+                    "seed": args.seed,
+                }
+            )
+            metadata_path = args.train.parent / "metadata.json"
+            mlflow_run.log_artifact(metadata_path, artifact_path="data")
+            if args.run_config is not None:
+                mlflow_run.log_artifact(args.run_config, artifact_path="config")
 
-        score = metrics["roc_auc"] if metrics["roc_auc"] is not None else metrics["f1"]
-        if float(score) > best_score:
-            best_score = float(score)
-            best_metrics = metrics
-            save_checkpoint(
-                args.output,
+        for epoch in range(1, args.epochs + 1):
+            train_loss = train_one_epoch(
                 model=model,
                 model_type=args.model,
-                model_config=model_config,
-                metrics=metrics,
-                threshold=float(metrics["threshold"]),
-                model_version=args.model_version,
+                loader=train_loader,
+                optimizer=optimizer,
+                criterion=criterion,
+                device=device,
+                amp=use_amp,
+                grad_accum_steps=args.grad_accum_steps,
+                log_every=args.log_every,
             )
-        print(f"epoch={epoch} train_loss={train_loss:.4f} metrics={metrics}")
+            labels, scores = predict_scores(
+                model=model,
+                model_type=args.model,
+                loader=val_loader,
+                device=device,
+            )
+            metrics = compute_classification_report(labels, scores)
+            metrics["train_loss"] = train_loss
+            metrics["epoch"] = epoch
+            history.append(metrics)
 
-    report = {
-        "model": args.model,
-        "model_version": args.model_version,
-        "checkpoint": str(args.output),
-        "device": str(device),
-        "best_metrics": best_metrics,
-        "history": history,
-    }
-    write_json(args.report_output, report)
+            if mlflow_run is not None:
+                mlflow_run.log_metrics(metrics, step=epoch)
+
+            score = metrics["roc_auc"] if metrics["roc_auc"] is not None else metrics["f1"]
+            if float(score) > best_score:
+                best_score = float(score)
+                best_metrics = metrics
+                save_checkpoint(
+                    args.output,
+                    model=model,
+                    model_type=args.model,
+                    model_config=model_config,
+                    metrics=metrics,
+                    threshold=float(metrics["threshold"]),
+                    model_version=args.model_version,
+                )
+            print(f"epoch={epoch} train_loss={train_loss:.4f} metrics={metrics}")
+
+        report = {
+            "model": args.model,
+            "model_version": args.model_version,
+            "checkpoint": str(args.output),
+            "device": str(device),
+            "train_path": str(args.train),
+            "val_path": str(args.val),
+            "rows_train": len(train_frame),
+            "rows_val": len(val_frame),
+            "best_metrics": best_metrics,
+            "history": history,
+        }
+        write_json(args.report_output, report)
+        if mlflow_run is not None:
+            if best_metrics is not None:
+                mlflow_run.log_metrics(
+                    {f"best_{key}": value for key, value in best_metrics.items()}
+                )
+            mlflow_run.log_artifact(args.report_output, artifact_path="reports")
+            mlflow_run.log_artifact(args.output, artifact_path="checkpoints")
+
     print(f"Saved checkpoint to {args.output}")
     print(f"Saved report to {args.report_output}")
 

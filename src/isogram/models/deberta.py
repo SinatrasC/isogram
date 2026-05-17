@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from typing import Any
+
 import torch
 from torch import nn
 
 
-def _load_transformers() -> tuple[object, object, object]:
+def _load_transformers() -> tuple[Any, Any, Any]:
     try:
         from transformers import AutoConfig, AutoModel, AutoTokenizer
     except ImportError as exc:

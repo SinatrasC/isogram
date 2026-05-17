@@ -6,7 +6,9 @@ from typing import Any
 import numpy as np
 
 
-def _as_arrays(labels: list[int] | np.ndarray, scores: list[float] | np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _as_arrays(
+    labels: list[int] | np.ndarray, scores: list[float] | np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
     y_true = np.asarray(labels, dtype=np.int64)
     y_score = np.asarray(scores, dtype=np.float64)
     if y_true.shape != y_score.shape:

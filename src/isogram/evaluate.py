@@ -7,19 +7,25 @@ from pathlib import Path
 import pandas as pd
 
 from isogram.config import CommonPaths, write_json
+from isogram.data.splits import Split
 from isogram.inference import Predictor
 from isogram.metrics import compute_classification_report
+from isogram.tracking import maybe_mlflow_run
 
 
 def build_parser() -> argparse.ArgumentParser:
     paths = CommonPaths()
     parser = argparse.ArgumentParser(description="Evaluate an Isogram checkpoint.")
     parser.add_argument("--checkpoint", type=Path, required=True)
-    parser.add_argument("--data", type=Path, default=paths.processed_dir / "val.csv")
+    parser.add_argument("--data", type=Path, default=paths.processed_dir / Split.VAL.filename)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--threshold", type=float)
+    parser.add_argument("--mlflow", action="store_true")
+    parser.add_argument("--mlflow-tracking-uri", default="file:mlruns")
+    parser.add_argument("--mlflow-experiment", default="isogram")
+    parser.add_argument("--mlflow-run-name")
     return parser
 
 
@@ -50,6 +56,25 @@ def main(argv: list[str] | None = None) -> None:
         }
     )
     write_json(args.output, report)
+    with maybe_mlflow_run(
+        enabled=args.mlflow,
+        tracking_uri=args.mlflow_tracking_uri,
+        experiment_name=args.mlflow_experiment,
+        run_name=args.mlflow_run_name or f"eval-{args.checkpoint.stem}",
+        tags={"stage": "evaluation", "checkpoint": str(args.checkpoint)},
+    ) as mlflow_run:
+        if mlflow_run is not None:
+            mlflow_run.log_params(
+                {
+                    "checkpoint": args.checkpoint,
+                    "data": args.data,
+                    "rows": len(texts),
+                    "batch_size": args.batch_size,
+                    "threshold": threshold,
+                }
+            )
+            mlflow_run.log_metrics(report)
+            mlflow_run.log_artifact(args.output, artifact_path="reports")
     print(f"Saved evaluation report to {args.output}")
     print(report)
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import string
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import torch
 from torch import nn
@@ -14,6 +14,7 @@ DEFAULT_CHARS = string.ascii_lowercase + string.digits + string.punctuation + " 
 class CharTokenizer:
     chars: str = DEFAULT_CHARS
     max_length: int = 2048
+    _char_to_id: dict[str, int] = field(init=False, repr=False)
 
     @property
     def pad_id(self) -> int:
@@ -28,7 +29,9 @@ class CharTokenizer:
         return len(self.chars) + 2
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "_char_to_id", {char: idx + 2 for idx, char in enumerate(self.chars)})
+        object.__setattr__(
+            self, "_char_to_id", {char: idx + 2 for idx, char in enumerate(self.chars)}
+        )
 
     def encode(self, text: str) -> torch.Tensor:
         normalized = text.lower()
