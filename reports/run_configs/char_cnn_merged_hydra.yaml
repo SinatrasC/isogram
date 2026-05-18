@@ -1,0 +1,36 @@
+dataset:
+  name: merged
+  train: data/processed/merged/train.csv
+  val: data/processed/merged/val.csv
+  test: data/processed/merged/test.csv
+  metadata: data/processed/merged/metadata.json
+model:
+  name: char_cnn
+  model_version: char-cnn-merged-v1
+  epochs: 5
+  batch_size: 64
+  learning_rate: 0.001
+  dropout: 0.2
+  amp: false
+  char_max_length: 2048
+  char_embedding_dim: 64
+  char_channels: 96
+  char_kernel_sizes:
+  - 3
+  - 5
+  - 7
+paths:
+  output: artifacts/checkpoints/char_cnn_merged.pt
+  report_output: reports/char_cnn_merged_training.json
+  run_config_dir: reports/run_configs
+training:
+  seed: 42
+  device: cuda
+  grad_accum_steps: 1
+  log_every: 50
+  limit_rows: null
+mlflow:
+  enabled: true
+  tracking_uri: file:mlruns
+  experiment: isogram
+  run_name: char-cnn-merged-standardized-5080

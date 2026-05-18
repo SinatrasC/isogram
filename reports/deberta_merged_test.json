@@ -1,0 +1,20 @@
+{
+  "batch_size": 32,
+  "brier_score": 0.011941141709784785,
+  "checkpoint": "artifacts/checkpoints/deberta_merged.pt",
+  "data": "data/processed/merged/test.csv",
+  "elapsed_seconds": 91.27661444499972,
+  "examples_per_second": 114.8925172539032,
+  "f1": 0.9872832369942196,
+  "false_negative": 53,
+  "false_positive": 68,
+  "model_version": "deberta-merged-v1",
+  "pr_auc": 0.9993431881601874,
+  "precision": 0.9857292759706191,
+  "recall": 0.9888421052631579,
+  "roc_auc": 0.9994457033292662,
+  "rows": 10487,
+  "threshold": 0.8685615062713623,
+  "true_negative": 5669,
+  "true_positive": 4697
+}
