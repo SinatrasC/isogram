@@ -1,0 +1,7 @@
+site_name: Isogram
+site_description: MLOps project documentation for AI-generated text detection.
+nav:
+  - Home: index.md
+  - MLOps Workflow: mlops.md
+theme:
+  name: mkdocs
