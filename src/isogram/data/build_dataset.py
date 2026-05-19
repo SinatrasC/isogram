@@ -26,6 +26,8 @@ DEFAULT_HF_SPLIT = "train"
 DEFAULT_HF_SAMPLE_ROWS = 60_000
 DEFAULT_HF_SHUFFLE_BUFFER = 10_000
 
+STANDARDIZED_OUTPUT_COLUMNS = ("text", "label", "source_dataset")
+
 
 def _label_counts(frame: pd.DataFrame) -> dict[str, int]:
     return {str(label): int(count) for label, count in frame["label"].value_counts().items()}
@@ -50,16 +52,16 @@ def _normalize_mapping_row(
     if not text:
         return None
 
-    normalized = {
+    # We deliberately do not copy the HF `source` column: in
+    # `srikanthgali/ai-text-detection-pile-cleaned` it holds "human"/"ai" — a
+    # string echo of `generated`, not a provenance field. Carrying it would mix
+    # semantics with local CSVs whose `source` column holds the generator name.
+    return {
         "text": text,
         "label": normalize_label(row[label_key]),
-        "source": str(row.get("source", "")),
         "source_dataset": source_dataset,
         "source_split": source_split,
     }
-    if "model" in row:
-        normalized["model"] = str(row.get("model", ""))
-    return normalized
 
 
 def collect_hf_balanced_sample(
@@ -154,6 +156,21 @@ def remove_cross_source_duplicates(frame: pd.DataFrame) -> tuple[pd.DataFrame, d
     }
 
 
+def _select_output_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    """Restrict a frame to the standardized output schema.
+
+    Drops auxiliary columns (HF's polluted `source`, local CSV's `prompt_name`,
+    `source_split`, etc.) so every saved split has the same columns regardless
+    of which sources fed it. Missing columns are filled with empty strings.
+    """
+    columns = list(STANDARDIZED_OUTPUT_COLUMNS)
+    out = frame.copy()
+    for column in columns:
+        if column not in out.columns:
+            out[column] = ""
+    return out[columns]
+
+
 def write_dataset_splits(
     *,
     frame: pd.DataFrame,
@@ -174,10 +191,10 @@ def write_dataset_splits(
     train_path = output_dir / Split.TRAIN.filename
     val_path = output_dir / Split.VAL.filename
     test_path = output_dir / Split.TEST.filename
-    frame.to_csv(all_path, index=False)
-    train.to_csv(train_path, index=False)
-    val.to_csv(val_path, index=False)
-    test.to_csv(test_path, index=False)
+    _select_output_columns(frame).to_csv(all_path, index=False)
+    _select_output_columns(train).to_csv(train_path, index=False)
+    _select_output_columns(val).to_csv(val_path, index=False)
+    _select_output_columns(test).to_csv(test_path, index=False)
 
     return {
         "rows_total": int(len(frame)),

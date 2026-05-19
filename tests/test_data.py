@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from isogram.data.build_dataset import build_merged_dataset
+from isogram.data.build_dataset import STANDARDIZED_OUTPUT_COLUMNS
 from isogram.data.schema import (
     normalize_frame,
     sample_balanced_by_label,
@@ -119,6 +120,7 @@ def test_build_merged_dataset_from_local_source(tmp_path) -> None:
     assert metadata["rows_train"] == 4
     assert metadata["rows_val"] == 2
     assert metadata["rows_test"] == 2
-    assert (output_dir / "train.csv").exists()
-    assert (output_dir / "val.csv").exists()
-    assert (output_dir / "test.csv").exists()
+    for split in ("all", "train", "val", "test"):
+        split_frame = pd.read_csv(output_dir / f"{split}.csv")
+        assert tuple(split_frame.columns) == STANDARDIZED_OUTPUT_COLUMNS
+        assert set(split_frame["label"]) == {0, 1}
