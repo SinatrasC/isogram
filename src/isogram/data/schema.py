@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 
-TEXT_COLUMNS = ("text", "essay", "full_text", "content")
+TEXT_COLUMNS = ("text", "essay", "full_text", "content", "abstract")
 LABEL_COLUMNS = ("generated", "label", "target", "is_generated")
 OPTIONAL_METADATA_COLUMNS = (
     "prompt_name",
@@ -15,6 +15,9 @@ OPTIONAL_METADATA_COLUMNS = (
     "source",
     "model",
     "source_dataset",
+    "source_detail",
+    "source_license",
+    "upstream_url",
     "source_split",
 )
 
@@ -55,7 +58,7 @@ def normalize_label(value: object) -> int:
     return label
 
 
-def normalize_frame(frame: pd.DataFrame) -> pd.DataFrame:
+def normalize_frame(frame: pd.DataFrame, *, require_binary: bool = True) -> pd.DataFrame:
     text_column = find_text_column(frame)
     label_column = find_label_column(frame)
 
@@ -74,7 +77,7 @@ def normalize_frame(frame: pd.DataFrame) -> pd.DataFrame:
     normalized = normalized.drop_duplicates(subset=["text", "label"]).reset_index(drop=True)
     if normalized.empty:
         raise ValueError("No usable rows after normalization")
-    if normalized["label"].nunique() < 2:
+    if require_binary and normalized["label"].nunique() < 2:
         raise ValueError("Dataset must contain both human and generated examples")
     return normalized
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import os
 import shutil
 import subprocess
@@ -10,6 +9,7 @@ from pathlib import Path
 import pandas as pd
 
 from isogram.config import CommonPaths, TrainingDefaults, dataclass_to_jsonable, write_json
+from isogram.data.licenses import filter_permissive_source_rows
 from isogram.data.schema import find_csv, normalize_frame, stratified_train_val_split
 from isogram.data.splits import Split
 
@@ -46,6 +46,7 @@ def prepare_dataset(
 ) -> dict[str, object]:
     csv_path = find_csv(raw_path)
     frame = pd.read_csv(csv_path)
+    frame, license_filter = filter_permissive_source_rows(frame)
     normalized = normalize_frame(frame)
     train, val = stratified_train_val_split(normalized, val_fraction=val_fraction, seed=seed)
 
@@ -57,6 +58,7 @@ def prepare_dataset(
 
     metadata = {
         "source_csv": str(csv_path),
+        "license_filter": license_filter,
         "rows_total": int(len(normalized)),
         "rows_train": int(len(train)),
         "rows_val": int(len(val)),
@@ -72,36 +74,23 @@ def prepare_dataset(
     return metadata
 
 
-def build_parser() -> argparse.ArgumentParser:
-    paths = CommonPaths()
-    defaults = TrainingDefaults()
-    parser = argparse.ArgumentParser(description="Prepare DAIGT v2 train/validation splits.")
-    parser.add_argument("--raw-path", type=Path, default=paths.raw_dir)
-    parser.add_argument("--output-dir", type=Path, default=paths.processed_dir)
-    parser.add_argument("--val-fraction", type=float, default=defaults.val_fraction)
-    parser.add_argument("--seed", type=int, default=defaults.seed)
-    parser.add_argument(
-        "--download",
-        action="store_true",
-        help="Use the Kaggle CLI to download DAIGT v2 before preparing splits.",
-    )
-    parser.add_argument(
-        "--kaggle-dataset",
-        default="thedrcat/daigt-v2-train-dataset",
-        help="Kaggle dataset slug used with --download.",
-    )
-    return parser
-
-
-def main(argv: list[str] | None = None) -> None:
-    args = build_parser().parse_args(argv)
-    if args.download:
-        download_with_kaggle(args.kaggle_dataset, args.raw_path)
+def main(
+    raw_path: str | Path = CommonPaths().raw_dir,
+    output_dir: str | Path = CommonPaths().processed_dir,
+    val_fraction: float = TrainingDefaults().val_fraction,
+    seed: int = TrainingDefaults().seed,
+    download: bool = False,
+    kaggle_dataset: str = "thedrcat/daigt-v2-train-dataset",
+) -> None:
+    raw_path = Path(raw_path)
+    output_dir = Path(output_dir)
+    if download:
+        download_with_kaggle(kaggle_dataset, raw_path)
     metadata = prepare_dataset(
-        raw_path=args.raw_path,
-        output_dir=args.output_dir,
-        val_fraction=args.val_fraction,
-        seed=args.seed,
+        raw_path=raw_path,
+        output_dir=output_dir,
+        val_fraction=val_fraction,
+        seed=seed,
     )
     print("Prepared dataset:")
     for key, value in {**dataclass_to_jsonable(CommonPaths()), **metadata}.items():
@@ -109,4 +98,6 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import fire
+
+    fire.Fire(main)
