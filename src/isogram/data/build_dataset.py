@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, cast
@@ -8,6 +7,7 @@ from typing import Any, cast
 import pandas as pd
 
 from isogram.config import CommonPaths, TrainingDefaults, dataclass_to_jsonable, write_json
+from isogram.data.licenses import filter_permissive_source_rows
 from isogram.data.schema import (
     LABEL_COLUMNS,
     TEXT_COLUMNS,
@@ -20,13 +20,24 @@ from isogram.data.schema import (
 from isogram.data.splits import Split
 
 
-DEFAULT_HF_DATASET = "srikanthgali/ai-text-detection-pile-cleaned"
-DEFAULT_HF_LICENSE = "mit"
+DEFAULT_HF_DATASET = "sinatras/isogram-ai-text-detection-splits"
+DEFAULT_HF_LICENSE = "other"
 DEFAULT_HF_SPLIT = "train"
 DEFAULT_HF_SAMPLE_ROWS = 60_000
 DEFAULT_HF_SHUFFLE_BUFFER = 10_000
+DEFAULT_HF_PRE_SPLIT = True
+DEFAULT_HF_TRAIN_SPLIT = "train"
+DEFAULT_HF_VAL_SPLIT = "validation"
+DEFAULT_HF_TEST_SPLIT = "test"
 
-STANDARDIZED_OUTPUT_COLUMNS = ("text", "label", "source_dataset")
+STANDARDIZED_OUTPUT_COLUMNS = (
+    "text",
+    "label",
+    "source_dataset",
+    "source_detail",
+    "source_license",
+    "upstream_url",
+)
 
 
 def _label_counts(frame: pd.DataFrame) -> dict[str, int]:
@@ -115,6 +126,101 @@ def collect_hf_balanced_sample(
     return normalize_frame(pd.DataFrame(rows))
 
 
+def load_hf_split(*, dataset_name: str, split: str) -> pd.DataFrame:
+    try:
+        from datasets import load_dataset
+    except ImportError as exc:
+        raise RuntimeError(
+            "Hugging Face dataset loading requires the optional `hf` extra. "
+            "Install it with `uv sync --extra hf` or `python -m pip install -e .[hf]`."
+        ) from exc
+
+    dataset = load_dataset(dataset_name, split=split)
+    frame = dataset.to_pandas()
+    normalized = normalize_frame(frame)
+    normalized["source_split"] = split
+    return normalized
+
+
+def build_hf_split_dataset(
+    *,
+    output_dir: Path,
+    dataset_name: str,
+    declared_license: str,
+    train_split: str,
+    val_split: str,
+    test_split: str,
+    sample_rows: int | None,
+    val_fraction: float,
+    test_fraction: float,
+    seed: int,
+) -> dict[str, object]:
+    train = load_hf_split(dataset_name=dataset_name, split=train_split)
+    val = load_hf_split(dataset_name=dataset_name, split=val_split)
+    test = load_hf_split(dataset_name=dataset_name, split=test_split)
+    combined = pd.concat([train, val, test], ignore_index=True, sort=False)
+
+    if sample_rows is not None and sample_rows < len(combined):
+        sampled = sample_balanced_by_label(combined, max_rows=sample_rows, seed=seed)
+        split_metadata = write_dataset_splits(
+            frame=sampled,
+            output_dir=output_dir,
+            val_fraction=val_fraction,
+            test_fraction=test_fraction,
+            seed=seed,
+        )
+        rows_used = int(len(sampled))
+    else:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        all_path = output_dir / Split.ALL.filename
+        train_path = output_dir / Split.TRAIN.filename
+        val_path = output_dir / Split.VAL.filename
+        test_path = output_dir / Split.TEST.filename
+        _select_output_columns(combined).to_csv(all_path, index=False)
+        _select_output_columns(train).to_csv(train_path, index=False)
+        _select_output_columns(val).to_csv(val_path, index=False)
+        _select_output_columns(test).to_csv(test_path, index=False)
+        split_metadata = {
+            "rows_total": int(len(combined)),
+            "rows_train": int(len(train)),
+            "rows_val": int(len(val)),
+            "rows_test": int(len(test)),
+            "label_counts": _label_counts(combined),
+            "train_label_counts": _label_counts(train),
+            "val_label_counts": _label_counts(val),
+            "test_label_counts": _label_counts(test),
+            "all_path": str(all_path),
+            "train_path": str(train_path),
+            "val_path": str(val_path),
+            "test_path": str(test_path),
+        }
+        rows_used = int(len(combined))
+
+    metadata = {
+        "seed": seed,
+        "val_fraction": val_fraction,
+        "test_fraction": test_fraction,
+        "sources": [
+            {
+                "kind": "huggingface_presplit",
+                "dataset": dataset_name,
+                "declared_license": declared_license,
+                "train_split": train_split,
+                "val_split": val_split,
+                "test_split": test_split,
+                "sample_rows": sample_rows,
+                "rows_used": rows_used,
+            }
+        ],
+        "rows_before_cross_source_deduplication": int(len(combined)),
+        "rows_with_conflicting_labels_removed": 0,
+        "duplicate_text_rows_removed": 0,
+        **split_metadata,
+    }
+    write_json(output_dir / "metadata.json", metadata)
+    return metadata
+
+
 def load_local_source(
     *,
     raw_path: Path,
@@ -125,8 +231,10 @@ def load_local_source(
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     csv_path = find_csv(raw_path)
     frame = pd.read_csv(csv_path)
-    normalized = normalize_frame(frame)
-    normalized["source_dataset"] = source_name
+    filtered, license_filter = filter_permissive_source_rows(frame)
+    normalized = normalize_frame(filtered, require_binary=False)
+    if "source_dataset" not in normalized.columns or normalized["source_dataset"].eq("").all():
+        normalized["source_dataset"] = source_name
     normalized["source_split"] = "local"
     sampled = sample_balanced_by_label(normalized, max_rows=sample_rows, seed=seed)
     metadata = {
@@ -134,6 +242,7 @@ def load_local_source(
         "source_name": source_name,
         "declared_license": declared_license,
         "source_csv": str(csv_path),
+        "license_filter": license_filter,
         "rows_normalized": int(len(normalized)),
         "rows_used": int(len(sampled)),
         "label_counts": _label_counts(sampled),
@@ -179,6 +288,9 @@ def write_dataset_splits(
     test_fraction: float,
     seed: int,
 ) -> dict[str, object]:
+    if frame["label"].nunique() < 2:
+        raise ValueError("Dataset must contain both human and generated examples")
+
     train, val, test = stratified_train_val_test_split(
         frame,
         val_fraction=val_fraction,
@@ -212,7 +324,7 @@ def write_dataset_splits(
     }
 
 
-def build_merged_dataset(
+def build_training_dataset(
     *,
     output_dir: Path,
     local_paths: list[Path],
@@ -228,7 +340,25 @@ def build_merged_dataset(
     val_fraction: float,
     test_fraction: float,
     seed: int,
+    hf_pre_split: bool = DEFAULT_HF_PRE_SPLIT,
+    hf_train_split: str = DEFAULT_HF_TRAIN_SPLIT,
+    hf_val_split: str = DEFAULT_HF_VAL_SPLIT,
+    hf_test_split: str = DEFAULT_HF_TEST_SPLIT,
 ) -> dict[str, object]:
+    if hf_pre_split and not skip_hf and not local_paths:
+        return build_hf_split_dataset(
+            output_dir=output_dir,
+            dataset_name=hf_dataset,
+            declared_license=hf_license,
+            train_split=hf_train_split,
+            val_split=hf_val_split,
+            test_split=hf_test_split,
+            sample_rows=hf_sample_rows,
+            val_fraction=val_fraction,
+            test_fraction=test_fraction,
+            seed=seed,
+        )
+
     frames: list[pd.DataFrame] = []
     sources: list[dict[str, object]] = []
 
@@ -290,68 +420,58 @@ def build_merged_dataset(
     return metadata
 
 
-def build_parser() -> argparse.ArgumentParser:
-    paths = CommonPaths()
-    defaults = TrainingDefaults()
-    parser = argparse.ArgumentParser(
-        description="Build merged, sampled AI-text detection train/val/test splits."
+def main(
+    output_dir: str | Path = CommonPaths().processed_dir,
+    local_path: str | Path | list[str | Path] | None = None,
+    local_sample_rows: int | None = None,
+    local_source_name: str | None = None,
+    local_license: str = "unverified",
+    hf_dataset: str = DEFAULT_HF_DATASET,
+    hf_split: str = DEFAULT_HF_SPLIT,
+    hf_sample_rows: int = DEFAULT_HF_SAMPLE_ROWS,
+    hf_license: str = DEFAULT_HF_LICENSE,
+    hf_shuffle_buffer: int = DEFAULT_HF_SHUFFLE_BUFFER,
+    hf_pre_split: bool = DEFAULT_HF_PRE_SPLIT,
+    hf_train_split: str = DEFAULT_HF_TRAIN_SPLIT,
+    hf_val_split: str = DEFAULT_HF_VAL_SPLIT,
+    hf_test_split: str = DEFAULT_HF_TEST_SPLIT,
+    skip_hf: bool = False,
+    val_fraction: float = 0.1,
+    test_fraction: float = 0.1,
+    seed: int = TrainingDefaults().seed,
+) -> None:
+    if local_path is None:
+        local_paths: list[Path] = []
+    elif isinstance(local_path, str | Path):
+        local_paths = [Path(local_path)]
+    else:
+        local_paths = [Path(path) for path in local_path]
+    metadata = build_training_dataset(
+        output_dir=Path(output_dir),
+        local_paths=local_paths,
+        local_source_name=local_source_name,
+        local_license=local_license,
+        local_sample_rows=local_sample_rows,
+        hf_dataset=hf_dataset,
+        hf_split=hf_split,
+        hf_sample_rows=hf_sample_rows,
+        hf_license=hf_license,
+        hf_shuffle_buffer=hf_shuffle_buffer,
+        hf_pre_split=hf_pre_split,
+        hf_train_split=hf_train_split,
+        hf_val_split=hf_val_split,
+        hf_test_split=hf_test_split,
+        skip_hf=skip_hf,
+        val_fraction=val_fraction,
+        test_fraction=test_fraction,
+        seed=seed,
     )
-    parser.add_argument("--output-dir", type=Path, default=paths.processed_dir)
-    parser.add_argument(
-        "--local-path",
-        type=Path,
-        action="append",
-        default=[],
-        help="Optional local CSV file or directory to merge, such as data/raw/daigt-v2.",
-    )
-    parser.add_argument(
-        "--local-sample-rows",
-        type=int,
-        help="Optional balanced row cap applied to each local source.",
-    )
-    parser.add_argument(
-        "--local-source-name",
-        help="Source name to write into metadata for local CSV rows.",
-    )
-    parser.add_argument(
-        "--local-license",
-        default="unverified",
-        help="Declared license to write into metadata for local CSV rows.",
-    )
-    parser.add_argument("--hf-dataset", default=DEFAULT_HF_DATASET)
-    parser.add_argument("--hf-split", default=DEFAULT_HF_SPLIT)
-    parser.add_argument("--hf-sample-rows", type=int, default=DEFAULT_HF_SAMPLE_ROWS)
-    parser.add_argument("--hf-license", default=DEFAULT_HF_LICENSE)
-    parser.add_argument("--hf-shuffle-buffer", type=int, default=DEFAULT_HF_SHUFFLE_BUFFER)
-    parser.add_argument("--skip-hf", action="store_true")
-    parser.add_argument("--val-fraction", type=float, default=0.1)
-    parser.add_argument("--test-fraction", type=float, default=0.1)
-    parser.add_argument("--seed", type=int, default=defaults.seed)
-    return parser
-
-
-def main(argv: list[str] | None = None) -> None:
-    args = build_parser().parse_args(argv)
-    metadata = build_merged_dataset(
-        output_dir=args.output_dir,
-        local_paths=args.local_path,
-        local_source_name=args.local_source_name,
-        local_license=args.local_license,
-        local_sample_rows=args.local_sample_rows,
-        hf_dataset=args.hf_dataset,
-        hf_split=args.hf_split,
-        hf_sample_rows=args.hf_sample_rows,
-        hf_license=args.hf_license,
-        hf_shuffle_buffer=args.hf_shuffle_buffer,
-        skip_hf=args.skip_hf,
-        val_fraction=args.val_fraction,
-        test_fraction=args.test_fraction,
-        seed=args.seed,
-    )
-    print("Built merged dataset:")
+    print("Built training dataset:")
     for key, value in {**dataclass_to_jsonable(CommonPaths()), **metadata}.items():
         print(f"  {key}: {value}")
 
 
 if __name__ == "__main__":
-    main()
+    import fire
+
+    fire.Fire(main)
