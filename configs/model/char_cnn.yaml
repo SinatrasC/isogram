@@ -1,8 +1,9 @@
 name: char_cnn
-model_version: char-cnn-merged-v1
-epochs: 5
+model_version: char-cnn-v1
+max_epochs: 5
 batch_size: 64
 learning_rate: 0.001
+weight_decay: 0.0
 dropout: 0.2
 amp: false
 char_max_length: 2048

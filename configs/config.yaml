@@ -1,0 +1,16 @@
+defaults:
+  - data: main
+  - model: char_cnn
+  - trainer: default
+  - logging: mlflow
+  - dvc: local
+  - serve: default
+  - _self_
+
+paths:
+  checkpoint: artifacts/checkpoints/${model.name}_${data.name}.pt
+  training_report: reports/${model.name}_${data.name}_training.json
+  evaluation_report: reports/${model.name}_${data.name}_evaluation.json
+  run_config: reports/run_configs/${model.name}_${data.name}.yaml
+  report_dir: reports
+  plot_dir: plots

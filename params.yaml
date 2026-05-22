@@ -1,12 +1,16 @@
 data:
   seed: 42
-  output_dir: data/processed/merged
-  local_path: data/raw/daigt-v2
-  local_source_name: drcat-v2
-  local_license: apache-2.0
-  hf_dataset: srikanthgali/ai-text-detection-pile-cleaned
+  output_dir: data/processed/main
+  local_paths: []
+  local_source_name: null
+  local_license: none
+  hf_dataset: sinatras/isogram-ai-text-detection-splits
   hf_split: train
-  hf_license: mit
+  hf_license: other
+  hf_pre_split: true
+  hf_train_split: train
+  hf_val_split: validation
+  hf_test_split: test
   hf_sample_rows: 60000
   hf_shuffle_buffer: 10000
   val_fraction: 0.1
@@ -14,9 +18,9 @@ data:
 
 training:
   dataset:
-    train: data/processed/merged/train.csv
-    val: data/processed/merged/val.csv
-    test: data/processed/merged/test.csv
+    train: data/processed/main/train.csv
+    val: data/processed/main/val.csv
+    test: data/processed/main/test.csv
   char_cnn:
     epochs: 5
     batch_size: 64
@@ -28,5 +32,5 @@ training:
     amp: true
 
 mlflow:
-  tracking_uri: file:mlruns
+  tracking_uri: http://127.0.0.1:8080
   experiment: isogram

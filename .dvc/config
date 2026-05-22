@@ -1,2 +1,7 @@
 [core]
     analytics = false
+    remote = data
+[remote "data"]
+    url = .dvc_storage/data
+[remote "models"]
+    url = .dvc_storage/models

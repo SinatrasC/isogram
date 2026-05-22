@@ -1,0 +1,4 @@
+enabled: true
+tracking_uri: http://127.0.0.1:8080
+experiment: isogram
+run_name: ${model.name}-${data.name}
