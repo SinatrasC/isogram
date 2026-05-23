@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import random
+import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -58,3 +59,16 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 def dataclass_to_jsonable(value: Any) -> dict[str, Any]:
     payload = asdict(value)
     return {key: str(item) if isinstance(item, Path) else item for key, item in payload.items()}
+
+
+def get_git_commit(root: Path = PROJECT_ROOT) -> str:
+    try:
+        output = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+    return output.strip()

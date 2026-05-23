@@ -1,22 +1,22 @@
 from __future__ import annotations
 
-import argparse
-from contextlib import nullcontext
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Callable, cast
+from typing import Any, cast
 
+import lightning.pytorch as pl
 import pandas as pd
 import torch
+from lightning.pytorch.loggers import CSVLogger
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
 from isogram.checkpoint import save_checkpoint
-from isogram.config import CommonPaths, TrainingDefaults, set_seed, write_json
-from isogram.data.splits import Split
+from isogram.config import DEFAULT_SEED, ensure_parent, get_git_commit, set_seed, write_json
+from isogram.data.schema import sample_balanced_by_label
 from isogram.metrics import compute_classification_report
 from isogram.models.char_cnn import CharCnnClassifier, CharTokenizer
 from isogram.models.deberta import DebertaBatcher, DebertaTextClassifier
-from isogram.tracking import maybe_mlflow_run
 
 
 class TextCsvDataset(Dataset):
@@ -31,15 +31,40 @@ class TextCsvDataset(Dataset):
         return {"text": self.texts[index], "label": self.labels[index]}
 
 
-def read_split(path: Path, *, limit_rows: int | None = None) -> pd.DataFrame:
+def cfg_get(config: Any, key: str, default: Any = None) -> Any:
+    if isinstance(config, Mapping):
+        return config.get(key, default)
+    if hasattr(config, "get"):
+        try:
+            return config.get(key, default)
+        except TypeError:
+            pass
+    return getattr(config, key, default)
+
+
+def _path_from_config(config: Any, key: str, fallback: Path) -> Path:
+    value = cfg_get(config, f"{key}_path", cfg_get(config, key, fallback))
+    return Path(str(value))
+
+
+def read_split(
+    path: Path, *, limit_rows: int | None = None, seed: int = DEFAULT_SEED
+) -> pd.DataFrame:
     frame = pd.read_csv(path)
     required = {"text", "label"}
     missing = required - set(frame.columns)
     if missing:
         raise ValueError(f"{path} is missing required columns: {sorted(missing)}")
+
+    normalized = frame.loc[:, ["text", "label"]].copy()
+    normalized["text"] = normalized["text"].astype(str).str.strip()
+    normalized["label"] = normalized["label"].astype(int)
+    normalized = normalized[normalized["text"].str.len() > 0].reset_index(drop=True)
+    if normalized["label"].nunique() < 2:
+        raise ValueError(f"{path} must contain both labels")
     if limit_rows is not None:
-        frame = frame.head(limit_rows)
-    return frame
+        normalized = sample_balanced_by_label(normalized, max_rows=limit_rows, seed=seed)
+    return normalized
 
 
 def make_collate_fn(
@@ -55,9 +80,11 @@ def make_collate_fn(
             dtype=torch.float32,
         )
         if model_type == "char_cnn":
-            assert char_tokenizer is not None
+            if char_tokenizer is None:
+                raise RuntimeError("Char tokenizer is required for char_cnn")
             return {"input_ids": char_tokenizer.batch_encode(texts), "labels": labels}
-        assert deberta_batcher is not None
+        if deberta_batcher is None:
+            raise RuntimeError("DeBERTa batcher is required for deberta")
         batch = deberta_batcher(texts)
         batch["labels"] = labels
         return batch
@@ -65,324 +92,456 @@ def make_collate_fn(
     return collate
 
 
-def forward_model(
-    model: nn.Module,
-    model_type: str,
-    batch: dict[str, torch.Tensor],
-) -> torch.Tensor:
+def build_model_stack(model_cfg: Any) -> tuple[nn.Module, dict[str, Any], Callable]:
+    model_type = str(cfg_get(model_cfg, "name", "char_cnn"))
+    dropout = float(cfg_get(model_cfg, "dropout", 0.2))
     if model_type == "char_cnn":
-        return model(batch["input_ids"])
-    return model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"])
-
-
-def move_batch(batch: dict[str, torch.Tensor], device: torch.device) -> dict[str, torch.Tensor]:
-    return {key: value.to(device) for key, value in batch.items()}
-
-
-def train_one_epoch(
-    *,
-    model: nn.Module,
-    model_type: str,
-    loader: DataLoader,
-    optimizer: torch.optim.Optimizer,
-    criterion: nn.Module,
-    device: torch.device,
-    amp: bool,
-    grad_accum_steps: int,
-    log_every: int,
-) -> float:
-    model.train()
-    total_loss = 0.0
-    total_examples = 0
-    optimizer.zero_grad(set_to_none=True)
-    scaler = torch.amp.GradScaler("cuda", enabled=amp)
-
-    for step, batch in enumerate(loader):
-        batch = move_batch(batch, device)
-        labels = batch.pop("labels")
-        context = torch.autocast(device_type="cuda", enabled=True) if amp else nullcontext()
-        with context:
-            logits = forward_model(model, model_type, batch)
-            loss = criterion(logits, labels)
-            scaled_loss = loss / grad_accum_steps
-        scaler.scale(scaled_loss).backward()
-
-        should_step = (step + 1) % grad_accum_steps == 0 or (step + 1) == len(loader)
-        if should_step:
-            scaler.step(optimizer)
-            scaler.update()
-            optimizer.zero_grad(set_to_none=True)
-
-        batch_size = int(labels.shape[0])
-        total_loss += float(loss.detach().cpu()) * batch_size
-        total_examples += batch_size
-        if log_every > 0 and (step + 1) % log_every == 0:
-            print(
-                f"  batch={step + 1}/{len(loader)} "
-                f"avg_train_loss={total_loss / max(total_examples, 1):.4f}",
-                flush=True,
-            )
-
-    return total_loss / max(total_examples, 1)
-
-
-def predict_scores(
-    *,
-    model: nn.Module,
-    model_type: str,
-    loader: DataLoader,
-    device: torch.device,
-) -> tuple[list[int], list[float]]:
-    model.eval()
-    labels_out: list[int] = []
-    scores_out: list[float] = []
-    with torch.no_grad():
-        for batch in loader:
-            batch = move_batch(batch, device)
-            labels = batch.pop("labels")
-            logits = forward_model(model, model_type, batch)
-            scores = torch.sigmoid(logits).detach().cpu().tolist()
-            labels_out.extend(int(label) for label in labels.detach().cpu().tolist())
-            scores_out.extend(float(score) for score in scores)
-    return labels_out, scores_out
-
-
-def build_model_stack(args: argparse.Namespace) -> tuple[nn.Module, dict[str, Any], Callable]:
-    if args.model == "char_cnn":
-        tokenizer = CharTokenizer(max_length=args.char_max_length)
+        tokenizer = CharTokenizer(max_length=int(cfg_get(model_cfg, "char_max_length", 2048)))
+        kernel_sizes = tuple(
+            int(value) for value in cfg_get(model_cfg, "char_kernel_sizes", (3, 5, 7))
+        )
+        embedding_dim = int(cfg_get(model_cfg, "char_embedding_dim", 64))
+        channels = int(cfg_get(model_cfg, "char_channels", 96))
         model_config = {
             "chars": tokenizer.chars,
             "max_length": tokenizer.max_length,
-            "embedding_dim": args.char_embedding_dim,
-            "channels": args.char_channels,
-            "kernel_sizes": tuple(args.char_kernel_sizes),
-            "dropout": args.dropout,
+            "embedding_dim": embedding_dim,
+            "channels": channels,
+            "kernel_sizes": kernel_sizes,
+            "dropout": dropout,
         }
         model: nn.Module = CharCnnClassifier(
             vocab_size=tokenizer.vocab_size,
-            embedding_dim=args.char_embedding_dim,
-            channels=args.char_channels,
-            kernel_sizes=tuple(args.char_kernel_sizes),
-            dropout=args.dropout,
+            embedding_dim=embedding_dim,
+            channels=channels,
+            kernel_sizes=kernel_sizes,
+            dropout=dropout,
         )
         collate = make_collate_fn(
-            model_type=args.model,
+            model_type=model_type,
             char_tokenizer=tokenizer,
             deberta_batcher=None,
         )
         return model, model_config, collate
 
-    batcher = DebertaBatcher(args.deberta_model_name, max_length=args.deberta_max_length)
-    model_config = {
-        "model_name": args.deberta_model_name,
-        "max_length": args.deberta_max_length,
-        "dropout": args.dropout,
-    }
-    model = DebertaTextClassifier.from_pretrained(args.deberta_model_name, dropout=args.dropout)
+    if model_type != "deberta":
+        raise ValueError(f"Unknown model type: {model_type}")
+
+    model_name = str(cfg_get(model_cfg, "deberta_model_name", "microsoft/deberta-v3-base"))
+    max_length = int(cfg_get(model_cfg, "deberta_max_length", 512))
+    batcher = DebertaBatcher(model_name, max_length=max_length)
+    model_config = {"model_name": model_name, "max_length": max_length, "dropout": dropout}
+    model = DebertaTextClassifier.from_pretrained(model_name, dropout=dropout)
     collate = make_collate_fn(
-        model_type=args.model,
+        model_type=model_type,
         char_tokenizer=None,
         deberta_batcher=batcher,
     )
     return model, model_config, collate
 
 
-def default_output_path(model_type: str) -> Path:
-    return CommonPaths().checkpoint_dir / f"{model_type}_best.pt"
+class TextDataModule(pl.LightningDataModule):
+    def __init__(
+        self,
+        *,
+        train_path: Path,
+        val_path: Path,
+        collate_fn: Callable[[list[dict[str, object]]], dict[str, torch.Tensor]],
+        batch_size: int,
+        num_workers: int,
+        limit_rows: int | None,
+        seed: int,
+    ) -> None:
+        super().__init__()
+        self.train_path = train_path
+        self.val_path = val_path
+        self.collate_fn = collate_fn
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.limit_rows = limit_rows
+        self.seed = seed
+        self.train_frame: pd.DataFrame | None = None
+        self.val_frame: pd.DataFrame | None = None
 
+    def setup(self, stage: str | None = None) -> None:
+        if stage in {None, "fit"}:
+            self.train_frame = read_split(
+                self.train_path,
+                limit_rows=self.limit_rows,
+                seed=self.seed,
+            )
+            self.val_frame = read_split(
+                self.val_path,
+                limit_rows=self.limit_rows,
+                seed=self.seed + 1,
+            )
 
-def build_parser() -> argparse.ArgumentParser:
-    paths = CommonPaths()
-    defaults = TrainingDefaults()
-    parser = argparse.ArgumentParser(description="Train Isogram PyTorch models.")
-    parser.add_argument("--model", choices=["char_cnn", "deberta"], required=True)
-    parser.add_argument("--train", type=Path, default=paths.processed_dir / Split.TRAIN.filename)
-    parser.add_argument("--val", type=Path, default=paths.processed_dir / Split.VAL.filename)
-    parser.add_argument("--output", type=Path)
-    parser.add_argument("--report-output", type=Path)
-    parser.add_argument("--model-version")
-    parser.add_argument("--device", default="auto")
-    parser.add_argument("--seed", type=int, default=defaults.seed)
-    parser.add_argument("--epochs", type=int)
-    parser.add_argument("--batch-size", type=int)
-    parser.add_argument("--learning-rate", type=float)
-    parser.add_argument("--grad-accum-steps", type=int, default=1)
-    parser.add_argument("--log-every", type=int, default=50)
-    parser.add_argument("--amp", action="store_true")
-    parser.add_argument("--limit-rows", type=int)
-    parser.add_argument("--dropout", type=float, default=0.2)
-    parser.add_argument("--char-max-length", type=int, default=defaults.char_max_length)
-    parser.add_argument("--char-embedding-dim", type=int, default=64)
-    parser.add_argument("--char-channels", type=int, default=96)
-    parser.add_argument("--char-kernel-sizes", type=int, nargs="+", default=[3, 5, 7])
-    parser.add_argument("--deberta-model-name", default="microsoft/deberta-v3-base")
-    parser.add_argument("--deberta-max-length", type=int, default=defaults.deberta_max_length)
-    parser.add_argument("--mlflow", action="store_true")
-    parser.add_argument("--mlflow-tracking-uri", default="file:mlruns")
-    parser.add_argument("--mlflow-experiment", default="isogram")
-    parser.add_argument("--mlflow-run-name")
-    parser.add_argument("--run-config", type=Path)
-    return parser
-
-
-def main(argv: list[str] | None = None) -> None:
-    args = build_parser().parse_args(argv)
-    defaults = TrainingDefaults()
-    set_seed(args.seed)
-
-    if args.output is None:
-        args.output = default_output_path(args.model)
-    if args.report_output is None:
-        args.report_output = CommonPaths().report_dir / f"{args.model}_training.json"
-    if args.model_version is None:
-        args.model_version = f"{args.model}-v1"
-    if args.epochs is None:
-        args.epochs = defaults.char_epochs if args.model == "char_cnn" else defaults.deberta_epochs
-    if args.batch_size is None:
-        args.batch_size = (
-            defaults.char_batch_size if args.model == "char_cnn" else defaults.deberta_batch_size
-        )
-    if args.learning_rate is None:
-        args.learning_rate = (
-            defaults.char_learning_rate
-            if args.model == "char_cnn"
-            else defaults.deberta_learning_rate
+    def train_dataloader(self) -> DataLoader:
+        if self.train_frame is None:
+            raise RuntimeError("Data module has not been set up")
+        generator = torch.Generator().manual_seed(self.seed)
+        return DataLoader(
+            TextCsvDataset(self.train_frame),
+            batch_size=self.batch_size,
+            shuffle=True,
+            collate_fn=self.collate_fn,
+            generator=generator,
+            num_workers=self.num_workers,
         )
 
-    if args.device == "auto":
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    else:
-        device = torch.device(args.device)
-    use_amp = bool(args.amp and device.type == "cuda")
+    def val_dataloader(self) -> DataLoader:
+        if self.val_frame is None:
+            raise RuntimeError("Data module has not been set up")
+        return DataLoader(
+            TextCsvDataset(self.val_frame),
+            batch_size=self.batch_size,
+            shuffle=False,
+            collate_fn=self.collate_fn,
+            num_workers=self.num_workers,
+        )
 
-    train_frame = read_split(args.train, limit_rows=args.limit_rows)
-    val_frame = read_split(args.val, limit_rows=args.limit_rows)
-    model, model_config, collate = build_model_stack(args)
-    model.to(device)
 
-    generator = torch.Generator().manual_seed(args.seed)
-    train_loader = DataLoader(
-        TextCsvDataset(train_frame),
-        batch_size=args.batch_size,
-        shuffle=True,
-        collate_fn=collate,
-        generator=generator,
-    )
-    val_loader = DataLoader(
-        TextCsvDataset(val_frame),
-        batch_size=args.batch_size,
-        shuffle=False,
-        collate_fn=collate,
-    )
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
-    criterion = nn.BCEWithLogitsLoss()
+class LightningTextClassifier(pl.LightningModule):
+    def __init__(
+        self,
+        *,
+        model: nn.Module,
+        model_type: str,
+        learning_rate: float,
+        weight_decay: float,
+    ) -> None:
+        super().__init__()
+        self.model = model
+        self.model_type = model_type
+        self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
+        self.criterion = nn.BCEWithLogitsLoss()
+        self.history: list[dict[str, Any]] = []
+        self.best_metrics: dict[str, Any] | None = None
+        self.best_state_dict: dict[str, torch.Tensor] | None = None
+        self.best_score = -1.0
+        self._train_losses: list[tuple[float, int]] = []
+        self._val_losses: list[tuple[float, int]] = []
+        self._val_labels: list[int] = []
+        self._val_scores: list[float] = []
 
-    best_score = -1.0
-    best_metrics: dict[str, Any] | None = None
-    history: list[dict[str, Any]] = []
+    def forward_logits(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
+        if self.model_type == "char_cnn":
+            return self.model(batch["input_ids"])
+        return self.model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"])
 
-    with maybe_mlflow_run(
-        enabled=args.mlflow,
-        tracking_uri=args.mlflow_tracking_uri,
-        experiment_name=args.mlflow_experiment,
-        run_name=args.mlflow_run_name or args.model_version,
-        tags={"model": args.model, "model_version": args.model_version},
-    ) as mlflow_run:
-        if mlflow_run is not None:
-            mlflow_run.log_params(
-                {
-                    "model": args.model,
-                    "model_version": args.model_version,
-                    "train_path": args.train,
-                    "val_path": args.val,
-                    "rows_train": len(train_frame),
-                    "rows_val": len(val_frame),
-                    "device": str(device),
-                    "epochs": args.epochs,
-                    "batch_size": args.batch_size,
-                    "learning_rate": args.learning_rate,
-                    "grad_accum_steps": args.grad_accum_steps,
-                    "amp": use_amp,
-                    "limit_rows": args.limit_rows,
-                    "dropout": args.dropout,
-                    "char_max_length": args.char_max_length,
-                    "char_embedding_dim": args.char_embedding_dim,
-                    "char_channels": args.char_channels,
-                    "char_kernel_sizes": args.char_kernel_sizes,
-                    "deberta_model_name": args.deberta_model_name,
-                    "deberta_max_length": args.deberta_max_length,
-                    "seed": args.seed,
-                }
-            )
-            metadata_path = args.train.parent / "metadata.json"
-            mlflow_run.log_artifact(metadata_path, artifact_path="data")
-            if args.run_config is not None:
-                mlflow_run.log_artifact(args.run_config, artifact_path="config")
+    def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
+        del batch_idx
+        labels = batch["labels"]
+        logits = self.forward_logits(batch)
+        loss = self.criterion(logits, labels)
+        batch_size = int(labels.shape[0])
+        self._train_losses.append((float(loss.detach().cpu()), batch_size))
+        self.log("train_loss", loss, on_epoch=True, on_step=False, batch_size=batch_size)
+        return loss
 
-        for epoch in range(1, args.epochs + 1):
-            train_loss = train_one_epoch(
-                model=model,
-                model_type=args.model,
-                loader=train_loader,
-                optimizer=optimizer,
-                criterion=criterion,
-                device=device,
-                amp=use_amp,
-                grad_accum_steps=args.grad_accum_steps,
-                log_every=args.log_every,
-            )
-            labels, scores = predict_scores(
-                model=model,
-                model_type=args.model,
-                loader=val_loader,
-                device=device,
-            )
-            metrics = compute_classification_report(labels, scores)
-            metrics["train_loss"] = train_loss
-            metrics["epoch"] = epoch
-            history.append(metrics)
+    def validation_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
+        del batch_idx
+        labels = batch["labels"]
+        logits = self.forward_logits(batch)
+        loss = self.criterion(logits, labels)
+        scores = torch.sigmoid(logits).detach().cpu().tolist()
+        self._val_losses.append((float(loss.detach().cpu()), int(labels.shape[0])))
+        self._val_labels.extend(int(label) for label in labels.detach().cpu().tolist())
+        self._val_scores.extend(float(score) for score in scores)
+        self.log("val_loss", loss, on_epoch=True, on_step=False, batch_size=int(labels.shape[0]))
+        return loss
 
-            if mlflow_run is not None:
-                mlflow_run.log_metrics(metrics, step=epoch)
+    def on_train_epoch_start(self) -> None:
+        self._train_losses = []
 
-            score = metrics["roc_auc"] if metrics["roc_auc"] is not None else metrics["f1"]
-            if float(score) > best_score:
-                best_score = float(score)
-                best_metrics = metrics
-                save_checkpoint(
-                    args.output,
-                    model=model,
-                    model_type=args.model,
-                    model_config=model_config,
-                    metrics=metrics,
-                    threshold=float(metrics["threshold"]),
-                    model_version=args.model_version,
-                )
-            print(f"epoch={epoch} train_loss={train_loss:.4f} metrics={metrics}")
+    def on_validation_epoch_start(self) -> None:
+        self._val_losses = []
+        self._val_labels = []
+        self._val_scores = []
 
-        report = {
-            "model": args.model,
-            "model_version": args.model_version,
-            "checkpoint": str(args.output),
-            "device": str(device),
-            "train_path": str(args.train),
-            "val_path": str(args.val),
-            "rows_train": len(train_frame),
-            "rows_val": len(val_frame),
-            "best_metrics": best_metrics,
-            "history": history,
+    def on_validation_epoch_end(self) -> None:
+        if not self._val_labels:
+            return
+
+        train_loss = _weighted_average(self._train_losses)
+        val_loss = _weighted_average(self._val_losses)
+        report = compute_classification_report(self._val_labels, self._val_scores)
+        record = {
+            "epoch": int(self.current_epoch) + 1,
+            "train_loss": train_loss,
+            "val_loss": val_loss,
+            **report,
         }
-        write_json(args.report_output, report)
-        if mlflow_run is not None:
-            if best_metrics is not None:
-                mlflow_run.log_metrics(
-                    {f"best_{key}": value for key, value in best_metrics.items()}
-                )
-            mlflow_run.log_artifact(args.report_output, artifact_path="reports")
-            mlflow_run.log_artifact(args.output, artifact_path="checkpoints")
+        self.history.append(record)
 
-    print(f"Saved checkpoint to {args.output}")
-    print(f"Saved report to {args.report_output}")
+        loggable = {
+            f"val_{key}": value
+            for key, value in report.items()
+            if isinstance(value, int | float) and value is not None
+        }
+        if val_loss is not None:
+            loggable["val_loss_epoch"] = val_loss
+        if loggable:
+            self.log_dict(loggable, on_epoch=True, on_step=False)
+
+        raw_score = report.get("roc_auc", report.get("f1", -1.0))
+        score = float(raw_score) if raw_score is not None else -1.0
+        if score > self.best_score:
+            self.best_score = score
+            self.best_metrics = record
+            self.best_state_dict = {
+                key: value.detach().cpu().clone() for key, value in self.model.state_dict().items()
+            }
+
+    def configure_optimizers(self) -> torch.optim.Optimizer:
+        return torch.optim.AdamW(
+            self.model.parameters(),
+            lr=self.learning_rate,
+            weight_decay=self.weight_decay,
+        )
+
+
+def _weighted_average(parts: list[tuple[float, int]]) -> float | None:
+    total = sum(value * count for value, count in parts)
+    count = sum(count for _, count in parts)
+    return total / count if count else None
+
+
+def write_training_plots(
+    *,
+    history: list[dict[str, Any]],
+    output_dir: Path,
+    run_name: str,
+) -> list[Path]:
+    if not history:
+        return []
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    plot_specs = [
+        ("loss", ("train_loss", "val_loss"), "Loss"),
+        ("ranking", ("roc_auc", "pr_auc"), "Area Under Curve"),
+        ("threshold", ("precision", "recall", "f1"), "Threshold Metrics"),
+    ]
+    paths: list[Path] = []
+
+    for slug, metrics, title in plot_specs:
+        fig, axis = plt.subplots(figsize=(7, 4))
+        for metric_name in metrics:
+            values = [
+                (int(record["epoch"]), float(record[metric_name]))
+                for record in history
+                if record.get(metric_name) is not None
+            ]
+            if values:
+                epochs, metric_values = zip(*values, strict=True)
+                axis.plot(epochs, metric_values, marker="o", label=metric_name)
+        axis.set_title(title)
+        axis.set_xlabel("Epoch")
+        axis.grid(True, alpha=0.3)
+        axis.legend()
+        fig.tight_layout()
+        path = output_dir / f"{run_name}_{slug}.png"
+        fig.savefig(path, dpi=150)
+        plt.close(fig)
+        paths.append(path)
+
+    return paths
+
+
+def _build_loggers(cfg: Any, *, run_name: str, git_commit: str) -> tuple[list[Any], Any | None]:
+    report_dir = Path(str(cfg_get(cfg.paths, "report_dir", "reports")))
+    csv_logger = CSVLogger(save_dir=str(report_dir / "lightning"), name=run_name)
+    loggers: list[Any] = [csv_logger]
+
+    logging_cfg = cfg_get(cfg, "logging", {})
+    if not bool(cfg_get(logging_cfg, "enabled", False)):
+        return loggers, None
+
+    try:
+        from lightning.pytorch.loggers import MLFlowLogger
+    except ImportError as exc:
+        raise RuntimeError(
+            "MLflow logging requires the optional `mlops` extra. "
+            "Install it with `uv sync --extra mlops`."
+        ) from exc
+
+    mlflow_logger = MLFlowLogger(
+        experiment_name=str(cfg_get(logging_cfg, "experiment", "isogram")),
+        tracking_uri=str(cfg_get(logging_cfg, "tracking_uri", "http://127.0.0.1:8080")),
+        run_name=str(cfg_get(logging_cfg, "run_name", run_name)),
+    )
+    mlflow_logger.experiment.set_tag(mlflow_logger.run_id, "git_commit", git_commit)
+    loggers.append(mlflow_logger)
+    return loggers, mlflow_logger
+
+
+def _save_resolved_config(cfg: Any, path: Path) -> None:
+    ensure_parent(path)
+    try:
+        from omegaconf import OmegaConf
+
+        OmegaConf.save(config=cfg, f=path)
+    except ImportError:
+        write_json(path.with_suffix(".json"), {"config": str(cfg)})
+
+
+def _log_artifacts(mlflow_logger: Any | None, paths: list[Path], *, artifact_path: str) -> None:
+    if mlflow_logger is None:
+        return
+    for path in paths:
+        if path.exists():
+            mlflow_logger.experiment.log_artifact(
+                mlflow_logger.run_id,
+                str(path),
+                artifact_path=artifact_path,
+            )
+
+
+def train_from_config(cfg: Any) -> dict[str, Any]:
+    data_cfg = cfg.data
+    model_cfg = cfg.model
+    trainer_cfg = cfg.trainer
+    paths_cfg = cfg.paths
+
+    seed = int(cfg_get(trainer_cfg, "seed", cfg_get(data_cfg, "seed", DEFAULT_SEED)))
+    set_seed(seed)
+
+    output_dir = Path(str(cfg_get(data_cfg, "output_dir", "data/processed/main")))
+    train_path = _path_from_config(data_cfg, "train", output_dir / "train.csv")
+    val_path = _path_from_config(data_cfg, "val", output_dir / "val.csv")
+    model_type = str(cfg_get(model_cfg, "name", "char_cnn"))
+    data_name = str(cfg_get(data_cfg, "name", "main"))
+    run_name = str(cfg_get(cfg.logging, "run_name", f"{model_type}-{data_name}"))
+
+    checkpoint_path = Path(
+        str(cfg_get(paths_cfg, "checkpoint", f"artifacts/checkpoints/{model_type}_{data_name}.pt"))
+    )
+    report_path = Path(str(cfg_get(paths_cfg, "training_report", f"reports/{run_name}.json")))
+    run_config_path = Path(
+        str(cfg_get(paths_cfg, "run_config", f"reports/run_configs/{run_name}.yaml"))
+    )
+    plot_dir = Path(str(cfg_get(paths_cfg, "plot_dir", "plots")))
+
+    model, model_config, collate = build_model_stack(model_cfg)
+    data_module = TextDataModule(
+        train_path=train_path,
+        val_path=val_path,
+        collate_fn=collate,
+        batch_size=int(cfg_get(model_cfg, "batch_size", 32)),
+        num_workers=int(cfg_get(trainer_cfg, "num_workers", 0)),
+        limit_rows=cfg_get(trainer_cfg, "limit_rows", None),
+        seed=seed,
+    )
+    lightning_model = LightningTextClassifier(
+        model=model,
+        model_type=model_type,
+        learning_rate=float(cfg_get(model_cfg, "learning_rate", 1e-3)),
+        weight_decay=float(cfg_get(model_cfg, "weight_decay", 0.0)),
+    )
+
+    git_commit = get_git_commit()
+    loggers, mlflow_logger = _build_loggers(cfg, run_name=run_name, git_commit=git_commit)
+    if mlflow_logger is not None:
+        mlflow_logger.log_hyperparams(
+            {
+                "model": model_type,
+                "model_version": cfg_get(model_cfg, "model_version", f"{model_type}-v1"),
+                "train_path": train_path,
+                "val_path": val_path,
+                "batch_size": int(cfg_get(model_cfg, "batch_size", 32)),
+                "learning_rate": float(cfg_get(model_cfg, "learning_rate", 1e-3)),
+                "max_epochs": int(
+                    cfg_get(model_cfg, "max_epochs", cfg_get(model_cfg, "epochs", 1))
+                ),
+                "limit_rows": cfg_get(trainer_cfg, "limit_rows", None),
+                "seed": seed,
+                "git_commit": git_commit,
+            }
+        )
+
+    precision = (
+        "16-mixed"
+        if bool(cfg_get(model_cfg, "amp", False))
+        else str(cfg_get(trainer_cfg, "precision", "32-true"))
+    )
+    trainer = pl.Trainer(
+        accelerator=str(cfg_get(trainer_cfg, "accelerator", "auto")),
+        devices=cfg_get(trainer_cfg, "devices", "auto"),
+        max_epochs=int(cfg_get(model_cfg, "max_epochs", cfg_get(model_cfg, "epochs", 1))),
+        accumulate_grad_batches=int(cfg_get(trainer_cfg, "grad_accum_steps", 1)),
+        precision=cast(Any, precision),
+        logger=loggers,
+        enable_checkpointing=False,
+        enable_progress_bar=bool(cfg_get(trainer_cfg, "enable_progress_bar", True)),
+        log_every_n_steps=int(cfg_get(trainer_cfg, "log_every_n_steps", 10)),
+        deterministic=bool(cfg_get(trainer_cfg, "deterministic", True)),
+        num_sanity_val_steps=0,
+    )
+    trainer.fit(lightning_model, datamodule=data_module)
+
+    if lightning_model.best_state_dict is not None:
+        lightning_model.model.load_state_dict(lightning_model.best_state_dict)
+
+    best_metrics = lightning_model.best_metrics or (
+        lightning_model.history[-1] if lightning_model.history else {}
+    )
+    threshold = float(best_metrics.get("threshold", 0.5))
+    save_checkpoint(
+        checkpoint_path,
+        model=lightning_model.model,
+        model_type=model_type,
+        model_config=model_config,
+        metrics=best_metrics,
+        threshold=threshold,
+        model_version=str(cfg_get(model_cfg, "model_version", f"{model_type}-v1")),
+    )
+
+    _save_resolved_config(cfg, run_config_path)
+    plot_paths = write_training_plots(
+        history=lightning_model.history, output_dir=plot_dir, run_name=run_name
+    )
+    report = {
+        "model": model_type,
+        "model_version": str(cfg_get(model_cfg, "model_version", f"{model_type}-v1")),
+        "checkpoint": str(checkpoint_path),
+        "train_path": str(train_path),
+        "val_path": str(val_path),
+        "git_commit": git_commit,
+        "best_metrics": best_metrics,
+        "history": lightning_model.history,
+        "plots": [str(path) for path in plot_paths],
+    }
+    write_json(report_path, report)
+
+    if mlflow_logger is not None:
+        if best_metrics:
+            for key, value in best_metrics.items():
+                if isinstance(value, int | float) and value is not None:
+                    mlflow_logger.experiment.log_metric(
+                        mlflow_logger.run_id,
+                        f"best_{key}",
+                        float(value),
+                    )
+        _log_artifacts(mlflow_logger, [report_path], artifact_path="reports")
+        _log_artifacts(mlflow_logger, [checkpoint_path], artifact_path="checkpoints")
+        _log_artifacts(mlflow_logger, [run_config_path], artifact_path="config")
+        _log_artifacts(mlflow_logger, plot_paths, artifact_path="plots")
+
+    print(f"Saved checkpoint to {checkpoint_path}")
+    print(f"Saved training report to {report_path}")
+    return report
+
+
+def main() -> None:
+    from isogram.commands import main as commands_main
+
+    commands_main()
 
 
 if __name__ == "__main__":
