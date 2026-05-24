@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import os
 from importlib.resources import files
 from pathlib import Path
@@ -60,19 +59,20 @@ def create_app(*, checkpoint: Path | None = None, device: str = "auto") -> FastA
     return app
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Serve Isogram predictions with FastAPI.")
-    parser.add_argument("--checkpoint", type=Path)
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--device", default="auto")
-    return parser
+def serve(
+    checkpoint: str | Path | None = None,
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    device: str = "auto",
+) -> None:
+    app = create_app(checkpoint=Path(checkpoint) if checkpoint is not None else None, device=device)
+    uvicorn.run(app, host=host, port=port)
 
 
-def main(argv: list[str] | None = None) -> None:
-    args = build_parser().parse_args(argv)
-    app = create_app(checkpoint=args.checkpoint, device=args.device)
-    uvicorn.run(app, host=args.host, port=args.port)
+def main() -> None:
+    import fire
+
+    fire.Fire(serve)
 
 
 if __name__ == "__main__":
