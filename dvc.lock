@@ -1,24 +1,32 @@
 schema: '2.0'
 stages:
   build_dataset:
-    cmd: python -m isogram.data.build_dataset --local-path data/raw/daigt-v2
-      --local-source-name drcat-v2 --local-license apache-2.0 --hf-dataset
-      srikanthgali/ai-text-detection-pile-cleaned --hf-split train --hf-license
-      mit --hf-sample-rows 60000 --hf-shuffle-buffer 10000 --output-dir
-      data/processed/merged --val-fraction 0.1 --test-fraction 0.1 --seed 42
+    cmd: python -m isogram.commands data dvc.enabled=false
+      data.output_dir=data/processed/main
+      data.hf_dataset=sinatras/isogram-ai-text-detection-splits
+      data.hf_split=train data.hf_license=other data.hf_pre_split=true
+      data.hf_train_split=train data.hf_val_split=validation
+      data.hf_test_split=test data.hf_sample_rows=60000
+      data.hf_shuffle_buffer=10000 data.val_fraction=0.1 data.test_fraction=0.1
+      data.seed=42
     deps:
-    - path: data/raw/daigt-v2/train_v2_drcat_02.csv
+    - path: configs
       hash: md5
-      md5: df3047e59f65015b0a68ece21de0e6e3
-      size: 101908038
+      md5: 077fbbf6a4de025bc3033df28c1fb76a.dir
+      size: 2017
+      nfiles: 8
     - path: src/isogram/data/build_dataset.py
       hash: md5
-      md5: b962e8d9411f131f037ca0dbcf54dc8e
-      size: 11738
+      md5: db1911c3d67a99cbb628a9d4c6d6e5b1
+      size: 15952
+    - path: src/isogram/data/download.py
+      hash: md5
+      md5: b7a11e2a80a973c33a4f7d58a96465df
+      size: 4920
     - path: src/isogram/data/schema.py
       hash: md5
-      md5: 6e13a66ecac34cbaf372ba2b43ac0a90
-      size: 7397
+      md5: 940d47ab4fa83991baf70fb1da9a48b3
+      size: 7523
     - path: src/isogram/data/splits.py
       hash: md5
       md5: e7d30512e7dee75e2cdb0288a6255e53
@@ -27,35 +35,39 @@ stages:
       params.yaml:
         data:
           seed: 42
-          output_dir: data/processed/merged
-          local_path: data/raw/daigt-v2
-          local_source_name: drcat-v2
-          local_license: apache-2.0
-          hf_dataset: srikanthgali/ai-text-detection-pile-cleaned
+          output_dir: data/processed/main
+          local_paths: []
+          local_source_name:
+          local_license: none
+          hf_dataset: sinatras/isogram-ai-text-detection-splits
           hf_split: train
-          hf_license: mit
+          hf_license: other
+          hf_pre_split: true
+          hf_train_split: train
+          hf_val_split: validation
+          hf_test_split: test
           hf_sample_rows: 60000
           hf_shuffle_buffer: 10000
           val_fraction: 0.1
           test_fraction: 0.1
     outs:
-    - path: data/processed/merged/all.csv
+    - path: data/processed/main/all.csv
       hash: md5
-      md5: 7c9fd1f1a03f976e9f0e0fb8e47ef7f3
-      size: 242654388
-    - path: data/processed/merged/metadata.json
+      md5: d24ee04a3682f7dd3d809d63d4bfc95f
+      size: 148179720
+    - path: data/processed/main/metadata.json
       hash: md5
-      md5: 6ff689df3148e3bbbb34ad538c49dbbb
-      size: 1310
-    - path: data/processed/merged/test.csv
+      md5: 9a2b8b1a8f2a2eeec3a09e5b97e04292
+      size: 1015
+    - path: data/processed/main/test.csv
       hash: md5
-      md5: 442268f4071d71816bee8b1cb1940980
-      size: 24386960
-    - path: data/processed/merged/train.csv
+      md5: 0ea6754eaa36463eacba3e46c18e20cb
+      size: 14833722
+    - path: data/processed/main/train.csv
       hash: md5
-      md5: 8d9acd5a68fa00642631b6374248b36c
-      size: 194080952
-    - path: data/processed/merged/val.csv
+      md5: abe4793466cc305757fb05b759eeabab
+      size: 118675019
+    - path: data/processed/main/val.csv
       hash: md5
-      md5: db3a36aa7b9d26456fafab280df90046
-      size: 24186528
+      md5: 20be8b660bd7586a4d49bac890bb4a00
+      size: 14671115

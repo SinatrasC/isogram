@@ -2,7 +2,7 @@ services:
   api:
     build: .
     environment:
-      ISOGRAM_CHECKPOINT: ${ISOGRAM_CHECKPOINT:-/app/artifacts/checkpoints/deberta_best.pt}
+      ISOGRAM_CHECKPOINT: ${ISOGRAM_CHECKPOINT:-/app/artifacts/checkpoints/deberta_main.pt}
       ISOGRAM_DEVICE: ${ISOGRAM_DEVICE:-auto}
     ports:
       - "8000:8000"
@@ -13,7 +13,8 @@ services:
     image: node:20-alpine
     profiles: ["loadtest"]
     working_dir: /app
-    command: ["node", "scripts/load_test.js", "--url", "http://api:8000/predict"]
+    command:
+      ["node", "scripts/load_test.js", "--url", "http://api:8000/predict"]
     depends_on:
       - api
     volumes:

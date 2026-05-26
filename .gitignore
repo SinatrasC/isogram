@@ -194,10 +194,14 @@ cython_debug/
 /models/
 /checkpoints/
 /outputs/
+/plots/
+/reports/
 /runs/
 /wandb/
 /mlruns/
+mlflow.db
 /lightning_logs/
+/.dvc_storage/
 *.pt
 *.pth
 *.ckpt
@@ -219,6 +223,9 @@ kaggle.json
 .DS_Store
 Thumbs.db
 docker-compose.override.yml
+
+# Local assignment/reference material
+/grading_specs/
 
 # PyCharm
 #   JetBrains specific template is maintained in a separate JetBrains.gitignore that can
@@ -255,3 +262,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Claude Code local runtime state
+.claude/
+.claude/scheduled_tasks.lock

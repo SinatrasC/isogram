@@ -1,24 +1,27 @@
 stages:
   build_dataset:
     cmd: >-
-      python -m isogram.data.build_dataset
-      --local-path ${data.local_path}
-      --local-source-name ${data.local_source_name}
-      --local-license ${data.local_license}
-      --hf-dataset ${data.hf_dataset}
-      --hf-split ${data.hf_split}
-      --hf-license ${data.hf_license}
-      --hf-sample-rows ${data.hf_sample_rows}
-      --hf-shuffle-buffer ${data.hf_shuffle_buffer}
-      --output-dir ${data.output_dir}
-      --val-fraction ${data.val_fraction}
-      --test-fraction ${data.test_fraction}
-      --seed ${data.seed}
+      python -m isogram.commands data
+      dvc.enabled=false
+      data.output_dir=${data.output_dir}
+      data.hf_dataset=${data.hf_dataset}
+      data.hf_split=${data.hf_split}
+      data.hf_license=${data.hf_license}
+      data.hf_pre_split=${data.hf_pre_split}
+      data.hf_train_split=${data.hf_train_split}
+      data.hf_val_split=${data.hf_val_split}
+      data.hf_test_split=${data.hf_test_split}
+      data.hf_sample_rows=${data.hf_sample_rows}
+      data.hf_shuffle_buffer=${data.hf_shuffle_buffer}
+      data.val_fraction=${data.val_fraction}
+      data.test_fraction=${data.test_fraction}
+      data.seed=${data.seed}
     deps:
+      - configs
       - src/isogram/data/build_dataset.py
+      - src/isogram/data/download.py
       - src/isogram/data/schema.py
       - src/isogram/data/splits.py
-      - data/raw/daigt-v2/train_v2_drcat_02.csv
     params:
       - data
     outs:
