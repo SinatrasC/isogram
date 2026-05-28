@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import pandas as pd
 
-from isogram.data.build_dataset import build_merged_dataset
+from isogram.data import build_dataset as build_dataset_module
+from isogram.data.build_dataset import load_local_source
+from isogram.data.build_dataset import build_training_dataset
 from isogram.data.build_dataset import STANDARDIZED_OUTPUT_COLUMNS
+from isogram.data.licenses import filter_permissive_source_rows
 from isogram.data.schema import (
     normalize_frame,
     sample_balanced_by_label,
@@ -89,7 +92,7 @@ def test_stratified_train_val_test_split_keeps_both_classes() -> None:
     assert set(test["label"]) == {0, 1}
 
 
-def test_build_merged_dataset_from_local_source(tmp_path) -> None:
+def test_build_training_dataset_from_local_source(tmp_path) -> None:
     raw_path = tmp_path / "raw.csv"
     pd.DataFrame(
         {
@@ -99,7 +102,7 @@ def test_build_merged_dataset_from_local_source(tmp_path) -> None:
     ).to_csv(raw_path, index=False)
     output_dir = tmp_path / "processed"
 
-    metadata = build_merged_dataset(
+    metadata = build_training_dataset(
         output_dir=output_dir,
         local_paths=[raw_path],
         local_source_name="local-test",
@@ -124,3 +127,91 @@ def test_build_merged_dataset_from_local_source(tmp_path) -> None:
         split_frame = pd.read_csv(output_dir / f"{split}.csv")
         assert tuple(split_frame.columns) == STANDARDIZED_OUTPUT_COLUMNS
         assert set(split_frame["label"]) == {0, 1}
+
+
+def test_license_filter_drops_non_permissive_daigt_sources() -> None:
+    frame = pd.DataFrame(
+        {
+            "text": ["allowed chatgpt", "blocked persuade", "blocked llama", "allowed radek"],
+            "label": [1, 0, 1, 1],
+            "source": ["chat_gpt_moth", "persuade_corpus", "llama_70b_v1", "radek_500"],
+        }
+    )
+
+    filtered, metadata = filter_permissive_source_rows(frame)
+
+    assert filtered["text"].tolist() == ["allowed chatgpt", "allowed radek"]
+    assert filtered["source_detail"].tolist() == ["chat_gpt_moth", "radek_500"]
+    assert set(filtered["source_license"]) == {"mit", "cc0-1.0"}
+    assert metadata["enabled"] is True
+    assert metadata["rows_removed"] == 2
+    assert metadata["removed_sources"] == {"persuade_corpus": 1, "llama_70b_v1": 1}
+
+
+def test_local_source_loader_filters_non_permissive_daigt_sources(tmp_path) -> None:
+    raw_path = tmp_path / "daigt.csv"
+    pd.DataFrame(
+        {
+            "text": ["allowed chatgpt", "blocked persuade", "allowed falcon"],
+            "label": [1, 0, 1],
+            "source": ["chat_gpt_moth", "persuade_corpus", "falcon_180b_v1"],
+        }
+    ).to_csv(raw_path, index=False)
+
+    frame, metadata = load_local_source(
+        raw_path=raw_path,
+        source_name="local-daigt",
+        declared_license="mixed",
+        sample_rows=None,
+        seed=42,
+    )
+
+    assert set(frame["text"]) == {"allowed chatgpt", "allowed falcon"}
+    assert set(frame["source_detail"]) == {"chat_gpt_moth", "falcon_180b_v1"}
+    assert set(frame["source_license"]) == {"mit", "apache-2.0"}
+    assert metadata["license_filter"]["rows_removed"] == 1
+
+
+def test_build_hf_split_dataset_preserves_public_splits(tmp_path, monkeypatch) -> None:
+    def fake_load_hf_split(*, dataset_name: str, split: str) -> pd.DataFrame:
+        assert dataset_name == "example/permissive-splits"
+        rows_by_split = {
+            "train": 4,
+            "validation": 2,
+            "test": 2,
+        }
+        return pd.DataFrame(
+            {
+                "text": [f"{split} human", f"{split} ai"] * (rows_by_split[split] // 2),
+                "label": [0, 1] * (rows_by_split[split] // 2),
+                "source_dataset": ["example/permissive-splits"] * rows_by_split[split],
+                "source_detail": [split] * rows_by_split[split],
+                "source_license": ["mit"] * rows_by_split[split],
+                "upstream_url": ["https://example.test/dataset"] * rows_by_split[split],
+            }
+        )
+
+    monkeypatch.setattr(build_dataset_module, "load_hf_split", fake_load_hf_split)
+
+    metadata = build_dataset_module.build_hf_split_dataset(
+        output_dir=tmp_path,
+        dataset_name="example/permissive-splits",
+        declared_license="mit",
+        train_split="train",
+        val_split="validation",
+        test_split="test",
+        sample_rows=8,
+        val_fraction=0.1,
+        test_fraction=0.1,
+        seed=42,
+    )
+
+    assert metadata["rows_total"] == 8
+    assert metadata["rows_train"] == 4
+    assert metadata["rows_val"] == 2
+    assert metadata["rows_test"] == 2
+    assert metadata["sources"][0]["kind"] == "huggingface_presplit"
+    for split in ("all", "train", "val", "test"):
+        split_frame = pd.read_csv(tmp_path / f"{split}.csv")
+        assert tuple(split_frame.columns) == STANDARDIZED_OUTPUT_COLUMNS
+        assert set(split_frame["source_license"]) == {"mit"}
