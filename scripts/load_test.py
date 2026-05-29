@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import statistics
 import time
 
@@ -21,28 +20,29 @@ def percentile(values: list[float], q: float) -> float:
     return ordered[index]
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Measure Isogram API response latency.")
-    parser.add_argument("--url", default="http://127.0.0.1:8000/predict")
-    parser.add_argument("--requests", type=int, default=50)
-    parser.add_argument("--timeout", type=float, default=30.0)
-    parser.add_argument("--text", default=DEFAULT_TEXT)
-    return parser
-
-
-def main() -> None:
-    args = build_parser().parse_args()
+def run(
+    url: str = "http://127.0.0.1:8000/predict",
+    requests: int = 50,
+    timeout: float = 30.0,
+    text: str = DEFAULT_TEXT,
+) -> None:
     latencies: list[float] = []
-    with httpx.Client(timeout=args.timeout) as client:
-        for _ in range(args.requests):
+    with httpx.Client(timeout=timeout) as client:
+        for _ in range(requests):
             started = time.perf_counter()
-            response = client.post(args.url, json={"text": args.text})
+            response = client.post(url, json={"text": text})
             response.raise_for_status()
             latencies.append(time.perf_counter() - started)
 
     print(f"requests: {len(latencies)}")
     print(f"median_seconds: {statistics.median(latencies):.4f}")
     print(f"p95_seconds: {percentile(latencies, 0.95):.4f}")
+
+
+def main() -> None:
+    import fire
+
+    fire.Fire(run)
 
 
 if __name__ == "__main__":
