@@ -2,45 +2,31 @@
 
 ## Dataset Versioning
 
-`params.yaml` stores the dataset construction parameters. `dvc.yaml` defines a
-`build_dataset` stage that rebuilds the merged sample from the local CSV source
-and the Hugging Face source. The generated data files stay under `data/`, which
-is ignored by Git.
+`params.yaml` stores dataset construction parameters and `dvc.yaml` defines a `build_dataset` stage. DVC is configured with separate local remotes for data and model artifacts:
 
-The generated `metadata.json` records:
+- `data`: `.dvc_storage/data`
+- `models`: `.dvc_storage/models`
 
-- source dataset names and declared licenses
-- source row counts and label counts
-- duplicate/conflicting-label removal counts
-- train/validation/test split sizes
-- random seed and split fractions
+The training command calls the dataset guard before fitting. It tries DVC first, then falls back to downloading the public Hugging Face splits.
 
 ## Experiment Configs
 
-Hydra configs live under `src/isogram/conf/`:
+Hydra configs live under the repository-level `configs/` directory:
 
-- `dataset/merged.yaml` defines the merged train/validation/test paths
-- `model/char_cnn.yaml` defines the baseline run
-- `model/deberta.yaml` defines the transformer run
+- `data/main.yaml` defines the public Hugging Face source, optional sampling, and split paths
+- `model/char_cnn.yaml` defines the baseline
+- `model/deberta.yaml` defines the transformer classifier
+- `trainer/default.yaml` defines Lightning runtime settings
+- `logging/mlflow.yaml` defines the tracking endpoint
 
-Each Hydra run writes a resolved config artifact under `reports/run_configs/`
-and passes that file to training so it is logged to MLflow.
+Each run saves the resolved config under `reports/run_configs/`.
 
 ## MLflow Tracking
 
-Training logs to the local `mlruns/` directory by default. Each run records:
+Normal training logs to `http://127.0.0.1:8080`. Each run records hyperparameters, the Git commit ID, per-epoch losses and metrics, best metrics, plots, reports, configs, and checkpoints.
 
-- model and dataset parameters
-- row counts and hardware device
-- per-epoch validation metrics
-- best validation metrics
-- resolved Hydra config
-- dataset metadata
-- training report JSON
-- checkpoint artifact
-
-Launch the local UI with:
+For local smoke tests without a server, pass:
 
 ```bash
-mlflow ui --backend-store-uri mlruns
+logging.enabled=false
 ```

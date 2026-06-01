@@ -1,38 +1,30 @@
 # Isogram
 
-Isogram is a PyTorch service for classifying English text as human-written or
-AI-generated. The repository includes dataset preparation, model training,
-evaluation, checkpointing, FastAPI serving, CI, pre-commit checks, and MLOps
-metadata for reproducible experiments.
-
-The main implementation path uses a sampled merged dataset under
-`data/processed/merged/` and keeps raw data, processed CSV files, checkpoints,
-and MLflow runs out of Git.
+Isogram is an AI-generated essay detection package with data building, PyTorch Lightning training, evaluation, FastAPI serving, DVC data handling, Hydra configs, MLflow logging, CI, and pre-commit checks.
 
 ## Main Commands
 
-Build the merged dataset:
+Build or fetch the default dataset:
 
 ```bash
-python -m isogram.data.build_dataset \
-  --local-path data/raw/daigt-v2 \
-  --local-source-name drcat-v2 \
-  --local-license apache-2.0 \
-  --hf-sample-rows 60000 \
-  --output-dir data/processed/merged
+uv run isogram data
 ```
 
-Train with Hydra and MLflow:
+Train the baseline and main model:
 
 ```bash
-isogram-train-hydra model=char_cnn
-isogram-train-hydra model=deberta
+uv run isogram train model=char_cnn
+uv run isogram train model=deberta
 ```
 
-Evaluate a checkpoint:
+Run a quick local smoke training job without MLflow:
 
 ```bash
-python -m isogram.evaluate \
-  --checkpoint artifacts/checkpoints/deberta_merged.pt \
-  --data data/processed/merged/test.csv
+uv run isogram train model=char_cnn trainer.limit_rows=512 model.max_epochs=3 logging.enabled=false
+```
+
+Evaluate a configured checkpoint:
+
+```bash
+uv run isogram evaluate model=char_cnn logging.enabled=false
 ```
