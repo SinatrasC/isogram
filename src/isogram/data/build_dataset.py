@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, cast
@@ -142,6 +143,121 @@ def load_hf_split(*, dataset_name: str, split: str) -> pd.DataFrame:
     return normalized
 
 
+def _allocate_presplit_sample_rows(
+    frames: Mapping[str, pd.DataFrame], *, sample_rows: int
+) -> dict[str, int]:
+    split_sizes = {split: int(len(frame)) for split, frame in frames.items()}
+    min_rows_per_split = 2
+    min_required = min_rows_per_split * len(split_sizes)
+    if sample_rows < min_required:
+        raise ValueError(
+            f"sample_rows must be at least {min_required} to keep train, validation, "
+            "and test splits non-empty with both labels"
+        )
+
+    too_small = [split for split, size in split_sizes.items() if size < min_rows_per_split]
+    if too_small:
+        raise ValueError(f"Cannot sample from splits with fewer than 2 rows: {too_small}")
+
+    total_rows = sum(split_sizes.values())
+    raw_targets = {
+        split: (sample_rows * split_size) / total_rows for split, split_size in split_sizes.items()
+    }
+    allocations = {
+        split: min(split_sizes[split], max(min_rows_per_split, math.floor(target)))
+        for split, target in raw_targets.items()
+    }
+    split_order = {split: index for index, split in enumerate(split_sizes)}
+
+    while sum(allocations.values()) > sample_rows:
+        candidates = [
+            split
+            for split, allocated_rows in allocations.items()
+            if allocated_rows > min_rows_per_split
+        ]
+        if not candidates:
+            raise ValueError("Could not allocate sample rows while preserving all public splits")
+        split_to_reduce = max(
+            candidates,
+            key=lambda split: (
+                allocations[split] - raw_targets[split],
+                allocations[split],
+                -split_order[split],
+            ),
+        )
+        allocations[split_to_reduce] -= 1
+
+    while sum(allocations.values()) < sample_rows:
+        candidates = [
+            split
+            for split, allocated_rows in allocations.items()
+            if allocated_rows < split_sizes[split]
+        ]
+        if not candidates:
+            raise ValueError("Could not allocate requested sample rows from available splits")
+        split_to_increase = max(
+            candidates,
+            key=lambda split: (
+                raw_targets[split] - allocations[split],
+                split_sizes[split],
+                -split_order[split],
+            ),
+        )
+        allocations[split_to_increase] += 1
+
+    return allocations
+
+
+def _sample_presplit_frames(
+    *,
+    train: pd.DataFrame,
+    val: pd.DataFrame,
+    test: pd.DataFrame,
+    sample_rows: int,
+    seed: int,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, int]]:
+    frames = {"train": train, "val": val, "test": test}
+    allocations = _allocate_presplit_sample_rows(frames, sample_rows=sample_rows)
+    sampled = {
+        split: sample_balanced_by_label(frame, max_rows=allocations[split], seed=seed + offset)
+        for offset, (split, frame) in enumerate(frames.items())
+    }
+    return sampled["train"], sampled["val"], sampled["test"], allocations
+
+
+def _write_presplit_dataset(
+    *,
+    output_dir: Path,
+    train: pd.DataFrame,
+    val: pd.DataFrame,
+    test: pd.DataFrame,
+) -> dict[str, object]:
+    combined = pd.concat([train, val, test], ignore_index=True, sort=False)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    all_path = output_dir / Split.ALL.filename
+    train_path = output_dir / Split.TRAIN.filename
+    val_path = output_dir / Split.VAL.filename
+    test_path = output_dir / Split.TEST.filename
+    _select_output_columns(combined).to_csv(all_path, index=False)
+    _select_output_columns(train).to_csv(train_path, index=False)
+    _select_output_columns(val).to_csv(val_path, index=False)
+    _select_output_columns(test).to_csv(test_path, index=False)
+    return {
+        "rows_total": int(len(combined)),
+        "rows_train": int(len(train)),
+        "rows_val": int(len(val)),
+        "rows_test": int(len(test)),
+        "label_counts": _label_counts(combined),
+        "train_label_counts": _label_counts(train),
+        "val_label_counts": _label_counts(val),
+        "test_label_counts": _label_counts(test),
+        "all_path": str(all_path),
+        "train_path": str(train_path),
+        "val_path": str(val_path),
+        "test_path": str(test_path),
+    }
+
+
 def build_hf_split_dataset(
     *,
     output_dir: Path,
@@ -159,42 +275,25 @@ def build_hf_split_dataset(
     val = load_hf_split(dataset_name=dataset_name, split=val_split)
     test = load_hf_split(dataset_name=dataset_name, split=test_split)
     combined = pd.concat([train, val, test], ignore_index=True, sort=False)
+    sampled_rows_by_split: dict[str, int] | None = None
 
     if sample_rows is not None and sample_rows < len(combined):
-        sampled = sample_balanced_by_label(combined, max_rows=sample_rows, seed=seed)
-        split_metadata = write_dataset_splits(
-            frame=sampled,
-            output_dir=output_dir,
-            val_fraction=val_fraction,
-            test_fraction=test_fraction,
+        train, val, test, sampled_rows_by_split = _sample_presplit_frames(
+            train=train,
+            val=val,
+            test=test,
+            sample_rows=sample_rows,
             seed=seed,
         )
-        rows_used = int(len(sampled))
-    else:
-        output_dir.mkdir(parents=True, exist_ok=True)
-        all_path = output_dir / Split.ALL.filename
-        train_path = output_dir / Split.TRAIN.filename
-        val_path = output_dir / Split.VAL.filename
-        test_path = output_dir / Split.TEST.filename
-        _select_output_columns(combined).to_csv(all_path, index=False)
-        _select_output_columns(train).to_csv(train_path, index=False)
-        _select_output_columns(val).to_csv(val_path, index=False)
-        _select_output_columns(test).to_csv(test_path, index=False)
-        split_metadata = {
-            "rows_total": int(len(combined)),
-            "rows_train": int(len(train)),
-            "rows_val": int(len(val)),
-            "rows_test": int(len(test)),
-            "label_counts": _label_counts(combined),
-            "train_label_counts": _label_counts(train),
-            "val_label_counts": _label_counts(val),
-            "test_label_counts": _label_counts(test),
-            "all_path": str(all_path),
-            "train_path": str(train_path),
-            "val_path": str(val_path),
-            "test_path": str(test_path),
-        }
-        rows_used = int(len(combined))
+
+    split_metadata = _write_presplit_dataset(
+        output_dir=output_dir,
+        train=train,
+        val=val,
+        test=test,
+    )
+    rows_total = split_metadata["rows_total"]
+    rows_used = rows_total if isinstance(rows_total, int) else int(str(rows_total))
 
     metadata = {
         "seed": seed,
@@ -210,6 +309,7 @@ def build_hf_split_dataset(
                 "test_split": test_split,
                 "sample_rows": sample_rows,
                 "rows_used": rows_used,
+                "sampled_rows_by_split": sampled_rows_by_split,
             }
         ],
         "rows_before_cross_source_deduplication": int(len(combined)),

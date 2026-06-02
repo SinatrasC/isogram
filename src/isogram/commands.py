@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +11,20 @@ from isogram.serve import serve as serve_app
 from isogram.train import cfg_get, train_from_config
 
 
-CONFIG_DIR = PROJECT_ROOT / "configs"
+ROOT_CONFIG_DIR = PROJECT_ROOT / "configs"
+PACKAGE_CONFIG_DIR = "configs"
+
+
+def _config_dir() -> Path:
+    if ROOT_CONFIG_DIR.exists():
+        return ROOT_CONFIG_DIR
+
+    package_config_dir = Path(str(files("isogram").joinpath(PACKAGE_CONFIG_DIR)))
+    if not package_config_dir.exists():
+        raise FileNotFoundError(
+            "Hydra configs were not found in the source checkout or installed package"
+        )
+    return package_config_dir
 
 
 def _compose_config(overrides: list[str] | None = None, *, config_name: str = "config") -> Any:
@@ -19,7 +33,7 @@ def _compose_config(overrides: list[str] | None = None, *, config_name: str = "c
     from omegaconf import OmegaConf
 
     GlobalHydra.instance().clear()
-    with initialize_config_dir(version_base="1.3", config_dir=str(CONFIG_DIR)):
+    with initialize_config_dir(version_base="1.3", config_dir=str(_config_dir())):
         cfg = compose(config_name=config_name, overrides=overrides or [])
     OmegaConf.resolve(cfg)
     return cfg
@@ -58,23 +72,33 @@ class Commands:
 
     def evaluate(self, *overrides: str) -> dict[str, Any]:
         cfg = _compose_config(_clean_overrides(overrides))
-        if bool(cfg_get(cfg.data, "ensure", True)):
+        data_cfg = cfg_get(cfg, "data", {})
+        model_cfg = cfg_get(cfg, "model", {})
+        trainer_cfg = cfg_get(cfg, "trainer", {})
+        paths_cfg = cfg_get(cfg, "paths", {})
+        logging_cfg = cfg_get(cfg, "logging", {})
+
+        if bool(cfg_get(data_cfg, "ensure", True)):
             ensure_dataset(cfg)
-        output_dir = Path(str(cfg.data.output_dir))
-        data_path = Path(str(cfg_get(cfg.data, "test_path", output_dir / "test.csv")))
-        checkpoint_path = Path(str(cfg.paths.checkpoint))
+        output_dir = Path(str(cfg_get(data_cfg, "output_dir", "data/processed/main")))
+        data_path = Path(str(cfg_get(data_cfg, "test_path", output_dir / "test.csv")))
+        checkpoint_path = Path(
+            str(cfg_get(paths_cfg, "checkpoint", "artifacts/checkpoints/model.pt"))
+        )
+        model_name = str(cfg_get(model_cfg, "name", "model"))
+        data_name = str(cfg_get(data_cfg, "name", "data"))
         return evaluate_checkpoint(
             checkpoint=checkpoint_path,
             data=data_path,
-            output=Path(str(cfg.paths.evaluation_report)),
-            device=str(cfg_get(cfg.trainer, "inference_device", "auto")),
+            output=Path(str(cfg_get(paths_cfg, "evaluation_report", "reports/evaluation.json"))),
+            device=str(cfg_get(trainer_cfg, "inference_device", "auto")),
             batch_size=int(
-                cfg_get(cfg.trainer, "eval_batch_size", cfg_get(cfg.model, "batch_size", 32))
+                cfg_get(trainer_cfg, "eval_batch_size", cfg_get(model_cfg, "batch_size", 32))
             ),
-            mlflow=bool(cfg.logging.enabled),
-            mlflow_tracking_uri=str(cfg.logging.tracking_uri),
-            mlflow_experiment=str(cfg.logging.experiment),
-            mlflow_run_name=f"eval-{cfg.model.name}-{cfg.data.name}",
+            mlflow=bool(cfg_get(logging_cfg, "enabled", False)),
+            mlflow_tracking_uri=str(cfg_get(logging_cfg, "tracking_uri", "http://127.0.0.1:8080")),
+            mlflow_experiment=str(cfg_get(logging_cfg, "experiment", "isogram")),
+            mlflow_run_name=f"eval-{model_name}-{data_name}",
         )
 
     def serve(self, *overrides: str) -> None:

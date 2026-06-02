@@ -3,9 +3,11 @@ from __future__ import annotations
 import pandas as pd
 
 from isogram.data import build_dataset as build_dataset_module
-from isogram.data.build_dataset import load_local_source
-from isogram.data.build_dataset import build_training_dataset
-from isogram.data.build_dataset import STANDARDIZED_OUTPUT_COLUMNS
+from isogram.data.build_dataset import (
+    STANDARDIZED_OUTPUT_COLUMNS,
+    build_training_dataset,
+    load_local_source,
+)
 from isogram.data.licenses import filter_permissive_source_rows
 from isogram.data.schema import (
     normalize_frame,
@@ -215,3 +217,62 @@ def test_build_hf_split_dataset_preserves_public_splits(tmp_path, monkeypatch) -
         split_frame = pd.read_csv(tmp_path / f"{split}.csv")
         assert tuple(split_frame.columns) == STANDARDIZED_OUTPUT_COLUMNS
         assert set(split_frame["source_license"]) == {"mit"}
+
+
+def test_build_hf_split_dataset_samples_inside_public_splits(tmp_path, monkeypatch) -> None:
+    def fake_load_hf_split(*, dataset_name: str, split: str) -> pd.DataFrame:
+        assert dataset_name == "example/main-splits"
+        rows_by_split = {
+            "train": 8,
+            "validation": 4,
+            "test": 4,
+        }
+        row_count = rows_by_split[split]
+        half = row_count // 2
+        labels = [0] * half + [1] * half
+        return pd.DataFrame(
+            {
+                "text": [f"{split} row {index}" for index in range(row_count)],
+                "label": labels,
+                "source_dataset": ["example/main-splits"] * row_count,
+                "source_detail": [split] * row_count,
+                "source_license": ["mit"] * row_count,
+                "upstream_url": ["https://example.test/dataset"] * row_count,
+            }
+        )
+
+    monkeypatch.setattr(build_dataset_module, "load_hf_split", fake_load_hf_split)
+
+    metadata = build_dataset_module.build_hf_split_dataset(
+        output_dir=tmp_path,
+        dataset_name="example/main-splits",
+        declared_license="mit",
+        train_split="train",
+        val_split="validation",
+        test_split="test",
+        sample_rows=8,
+        val_fraction=0.1,
+        test_fraction=0.1,
+        seed=42,
+    )
+
+    assert metadata["rows_total"] == 8
+    assert metadata["rows_train"] == 4
+    assert metadata["rows_val"] == 2
+    assert metadata["rows_test"] == 2
+    assert metadata["sources"][0]["sampled_rows_by_split"] == {
+        "train": 4,
+        "val": 2,
+        "test": 2,
+    }
+
+    expected_source_details = {
+        "train": "train",
+        "val": "validation",
+        "test": "test",
+    }
+    for split, expected_source_detail in expected_source_details.items():
+        split_frame = pd.read_csv(tmp_path / f"{split}.csv")
+        assert tuple(split_frame.columns) == STANDARDIZED_OUTPUT_COLUMNS
+        assert set(split_frame["source_detail"]) == {expected_source_detail}
+        assert set(split_frame["label"]) == {0, 1}

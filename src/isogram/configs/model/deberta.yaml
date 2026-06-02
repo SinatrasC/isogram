@@ -1,0 +1,10 @@
+name: deberta
+model_version: deberta-v1
+max_epochs: 1
+batch_size: 16
+learning_rate: 0.00002
+weight_decay: 0.01
+dropout: 0.2
+amp: true
+deberta_model_name: microsoft/deberta-v3-base
+deberta_max_length: 512

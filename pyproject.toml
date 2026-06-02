@@ -58,7 +58,16 @@ isogram-serve = "isogram.serve:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-isogram = ["static/*.html"]
+isogram = [
+    "configs/*.yaml",
+    "configs/data/*.yaml",
+    "configs/dvc/*.yaml",
+    "configs/logging/*.yaml",
+    "configs/model/*.yaml",
+    "configs/serve/*.yaml",
+    "configs/trainer/*.yaml",
+    "static/*.html",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

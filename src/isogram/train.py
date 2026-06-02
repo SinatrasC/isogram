@@ -417,7 +417,8 @@ def train_from_config(cfg: Any) -> dict[str, Any]:
     val_path = _path_from_config(data_cfg, "val", output_dir / "val.csv")
     model_type = str(cfg_get(model_cfg, "name", "char_cnn"))
     data_name = str(cfg_get(data_cfg, "name", "main"))
-    run_name = str(cfg_get(cfg.logging, "run_name", f"{model_type}-{data_name}"))
+    logging_cfg = cfg_get(cfg, "logging", {})
+    run_name = str(cfg_get(logging_cfg, "run_name", f"{model_type}-{data_name}"))
 
     checkpoint_path = Path(
         str(cfg_get(paths_cfg, "checkpoint", f"artifacts/checkpoints/{model_type}_{data_name}.pt"))

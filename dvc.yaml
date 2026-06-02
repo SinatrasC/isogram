@@ -18,6 +18,7 @@ stages:
       data.seed=${data.seed}
     deps:
       - configs
+      - src/isogram/commands.py
       - src/isogram/data/build_dataset.py
       - src/isogram/data/download.py
       - src/isogram/data/schema.py

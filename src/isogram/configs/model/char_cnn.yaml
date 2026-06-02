@@ -1,0 +1,15 @@
+name: char_cnn
+model_version: char-cnn-v1
+max_epochs: 5
+batch_size: 64
+learning_rate: 0.001
+weight_decay: 0.0
+dropout: 0.2
+amp: false
+char_max_length: 2048
+char_embedding_dim: 64
+char_channels: 96
+char_kernel_sizes:
+  - 3
+  - 5
+  - 7

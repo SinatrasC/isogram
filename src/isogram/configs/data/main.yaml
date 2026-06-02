@@ -1,0 +1,29 @@
+name: main
+seed: 42
+ensure: true
+use_dvc: true
+output_dir: data/processed/main
+all_path: ${data.output_dir}/all.csv
+train_path: ${data.output_dir}/train.csv
+val_path: ${data.output_dir}/val.csv
+test_path: ${data.output_dir}/test.csv
+metadata_path: ${data.output_dir}/metadata.json
+
+local_paths: []
+local_source_name: null
+local_license: none
+local_sample_rows: null
+
+hf_dataset: sinatras/isogram-ai-text-detection-splits
+hf_split: train
+hf_license: other
+hf_pre_split: true
+hf_train_split: train
+hf_val_split: validation
+hf_test_split: test
+hf_sample_rows: 60000
+hf_shuffle_buffer: 10000
+skip_hf: false
+
+val_fraction: 0.1
+test_fraction: 0.1

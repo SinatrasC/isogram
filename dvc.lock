@@ -12,13 +12,17 @@ stages:
     deps:
     - path: configs
       hash: md5
-      md5: 077fbbf6a4de025bc3033df28c1fb76a.dir
-      size: 2017
+      md5: cf727965a36dcbe80eb76c5526022beb.dir
+      size: 1985
       nfiles: 8
+    - path: src/isogram/commands.py
+      hash: md5
+      md5: ceff9b7c33375c3368e89e79b1568eb8
+      size: 4695
     - path: src/isogram/data/build_dataset.py
       hash: md5
-      md5: db1911c3d67a99cbb628a9d4c6d6e5b1
-      size: 15952
+      md5: 5e1c5cf91b0e74193b5a48f237575fc9
+      size: 19291
     - path: src/isogram/data/download.py
       hash: md5
       md5: b7a11e2a80a973c33a4f7d58a96465df
@@ -57,8 +61,8 @@ stages:
       size: 148179720
     - path: data/processed/main/metadata.json
       hash: md5
-      md5: 9a2b8b1a8f2a2eeec3a09e5b97e04292
-      size: 1015
+      md5: 35fa5b81949552ba8b6e916aa0409695
+      size: 1052
     - path: data/processed/main/test.csv
       hash: md5
       md5: 0ea6754eaa36463eacba3e46c18e20cb
