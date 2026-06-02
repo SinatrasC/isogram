@@ -52,39 +52,42 @@ def _trials(mode: str) -> list[tuple[str, str, list[str]]]:
             ["model.learning_rate=0.001", "model.dropout=0.1", "model.char_channels=128"],
         ),
         (
-            "deberta_lr1e-5_do0.1_bs16_ep2",
+            "deberta_lr1e-5_do0.1_bs64_ep2",
             "deberta",
             [
                 "model.learning_rate=0.00001",
                 "model.dropout=0.1",
-                "model.batch_size=16",
+                "model.batch_size=64",
+                "trainer.eval_batch_size=64",
                 "model.max_epochs=2",
             ],
         ),
         (
-            "deberta_lr2e-5_do0.2_bs16_ep2",
+            "deberta_lr2e-5_do0.2_bs64_ep2",
             "deberta",
             [
                 "model.learning_rate=0.00002",
                 "model.dropout=0.2",
-                "model.batch_size=16",
+                "model.batch_size=64",
+                "trainer.eval_batch_size=64",
                 "model.max_epochs=2",
             ],
         ),
         (
-            "deberta_lr3e-5_do0.2_bs16_ep2",
+            "deberta_lr3e-5_do0.2_bs64_ep2",
             "deberta",
             [
                 "model.learning_rate=0.00003",
                 "model.dropout=0.2",
-                "model.batch_size=16",
+                "model.batch_size=64",
+                "trainer.eval_batch_size=64",
                 "model.max_epochs=2",
             ],
         ),
     ]
     if mode == "full":
         return full_trials
-    smoke_trial_names = {"char_cnn_lr1e-3_do0.2_ch96", "deberta_lr2e-5_do0.2_bs16_ep2"}
+    smoke_trial_names = {"char_cnn_lr1e-3_do0.2_ch96", "deberta_lr2e-5_do0.2_bs64_ep2"}
     return [
         (trial_name, model_name, [*overrides, *smoke_suffix])
         for trial_name, model_name, overrides in full_trials
