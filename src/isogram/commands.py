@@ -6,6 +6,7 @@ from typing import Any
 
 from isogram.config import PROJECT_ROOT
 from isogram.data.download import ensure_dataset
+from isogram.dvc import pull_checkpoint_artifact
 from isogram.evaluate import evaluate_checkpoint
 from isogram.serve import serve as serve_app
 from isogram.train import cfg_get, train_from_config
@@ -85,6 +86,7 @@ class Commands:
         checkpoint_path = Path(
             str(cfg_get(paths_cfg, "checkpoint", "artifacts/checkpoints/model.pt"))
         )
+        pull_checkpoint_artifact(checkpoint_path, cfg_get(cfg, "dvc", {}))
         model_name = str(cfg_get(model_cfg, "name", "model"))
         data_name = str(cfg_get(data_cfg, "name", "data"))
         return evaluate_checkpoint(
@@ -103,8 +105,10 @@ class Commands:
 
     def serve(self, *overrides: str) -> None:
         cfg = _compose_config(_clean_overrides(overrides))
+        checkpoint = Path(str(cfg_get(cfg.serve, "checkpoint", cfg.paths.checkpoint)))
+        pull_checkpoint_artifact(checkpoint, cfg_get(cfg, "dvc", {}))
         serve_app(
-            checkpoint=Path(str(cfg_get(cfg.serve, "checkpoint", cfg.paths.checkpoint))),
+            checkpoint=checkpoint,
             host=str(cfg_get(cfg.serve, "host", "127.0.0.1")),
             port=int(cfg_get(cfg.serve, "port", 8000)),
             device=str(cfg_get(cfg.serve, "device", "auto")),

@@ -1,3 +1,7 @@
 enabled: true
 data_remote: data
 model_remote: models
+pull_data: true
+pull_imports: true
+pull_models: true
+push_models: true

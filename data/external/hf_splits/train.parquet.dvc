@@ -1,0 +1,13 @@
+md5: e34f14387d882c6368207985bcd03ad4
+frozen: true
+deps:
+- checksum: '"1585907645a8b03213c3cf748e797808aa5a7634e8b65381b189dcf80b4592c2"'
+  size: 64514764
+  hash: md5
+  path:
+    https://huggingface.co/datasets/sinatras/isogram-ai-text-detection-splits/resolve/main/data/train-00000-of-00001.parquet
+outs:
+- md5: 0a95fc5cae21289a24891a820b94501a
+  size: 64514764
+  hash: md5
+  path: train.parquet

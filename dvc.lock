@@ -1,48 +1,75 @@
 schema: '2.0'
 stages:
   build_dataset:
-    cmd: python -m isogram.commands data dvc.enabled=false
-      data.output_dir=data/processed/main
+    cmd: python -m isogram.commands data dvc.enabled=true dvc.pull_data=false
+      dvc.pull_imports=true data.output_dir=data/processed/main
+      data.local_pre_split=true
+      data.local_train_path=data/external/hf_splits/train.parquet
+      data.local_val_path=data/external/hf_splits/validation.parquet
+      data.local_test_path=data/external/hf_splits/test.parquet
+      data.local_source_name=sinatras/isogram-ai-text-detection-splits
+      data.local_license=other
       data.hf_dataset=sinatras/isogram-ai-text-detection-splits
       data.hf_split=train data.hf_license=other data.hf_pre_split=true
       data.hf_train_split=train data.hf_val_split=validation
       data.hf_test_split=test data.hf_sample_rows=60000
-      data.hf_shuffle_buffer=10000 data.val_fraction=0.1 data.test_fraction=0.1
-      data.seed=42
+      data.hf_shuffle_buffer=10000 data.skip_hf=true data.val_fraction=0.1
+      data.test_fraction=0.1 data.seed=42
     deps:
     - path: configs
       hash: md5
-      md5: cf727965a36dcbe80eb76c5526022beb.dir
-      size: 1985
+      md5: a0afa6153571516811a3ae888d9c1bb2.dir
+      size: 2522
       nfiles: 8
+    - path: data/external/hf_splits/test.parquet
+      hash: md5
+      md5: ddf539fcf83accb88d543c254249e62f
+      size: 8085699
+    - path: data/external/hf_splits/train.parquet
+      hash: md5
+      md5: 0a95fc5cae21289a24891a820b94501a
+      size: 64514764
+    - path: data/external/hf_splits/validation.parquet
+      hash: md5
+      md5: 15b941d19a2df69edc45b622652e965d
+      size: 7986072
     - path: src/isogram/commands.py
       hash: md5
-      md5: ceff9b7c33375c3368e89e79b1568eb8
-      size: 4695
+      md5: 5a1c4e3357df1c53c611144111a2eeec
+      size: 4921
     - path: src/isogram/data/build_dataset.py
       hash: md5
-      md5: 5e1c5cf91b0e74193b5a48f237575fc9
-      size: 19291
+      md5: f794e99c42e3336efa93c86dfc43de71
+      size: 23767
     - path: src/isogram/data/download.py
       hash: md5
-      md5: b7a11e2a80a973c33a4f7d58a96465df
-      size: 4920
+      md5: 66e047559114900fe82b313be880bd80
+      size: 6015
     - path: src/isogram/data/schema.py
       hash: md5
-      md5: 940d47ab4fa83991baf70fb1da9a48b3
-      size: 7523
+      md5: 8547534a5dd4c7c537046a8515e654a9
+      size: 8123
     - path: src/isogram/data/splits.py
       hash: md5
       md5: e7d30512e7dee75e2cdb0288a6255e53
       size: 236
+    - path: src/isogram/dvc.py
+      hash: md5
+      md5: 242a8622d7732cde0bef349608c1a117
+      size: 3621
     params:
       params.yaml:
         data:
           seed: 42
           output_dir: data/processed/main
           local_paths: []
-          local_source_name:
-          local_license: none
+          local_pre_split: true
+          local_train_path: data/external/hf_splits/train.parquet
+          local_val_path: data/external/hf_splits/validation.parquet
+          local_test_path: data/external/hf_splits/test.parquet
+          local_source_name: sinatras/isogram-ai-text-detection-splits
+          local_license: other
+          local_sample_rows:
           hf_dataset: sinatras/isogram-ai-text-detection-splits
           hf_split: train
           hf_license: other
@@ -52,6 +79,7 @@ stages:
           hf_test_split: test
           hf_sample_rows: 60000
           hf_shuffle_buffer: 10000
+          skip_hf: true
           val_fraction: 0.1
           test_fraction: 0.1
     outs:
@@ -61,8 +89,8 @@ stages:
       size: 148179720
     - path: data/processed/main/metadata.json
       hash: md5
-      md5: 35fa5b81949552ba8b6e916aa0409695
-      size: 1052
+      md5: 3202dda9a741d755dd1bf6aaeb79a9cb
+      size: 1147
     - path: data/processed/main/test.csv
       hash: md5
       md5: 0ea6754eaa36463eacba3e46c18e20cb

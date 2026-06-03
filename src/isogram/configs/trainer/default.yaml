@@ -10,3 +10,10 @@ enable_progress_bar: true
 deterministic: true
 inference_device: auto
 eval_batch_size: 32
+checkpoint_monitor: val_roc_auc
+checkpoint_mode: max
+early_stopping_patience: 2
+early_stopping_min_delta: 0.0
+lr_scheduler: cosine
+min_lr_factor: 0.1
+learning_rate_monitor: true

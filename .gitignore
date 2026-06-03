@@ -185,12 +185,14 @@ dmypy.json
 cython_debug/
 
 # Project artifacts
-/artifacts/
-/data/raw/
-/data/processed/
-/data/external/
-/data/interim/
-/data/cache/
+/artifacts/**
+!/artifacts/**/
+!/artifacts/**/*.dvc
+!/artifacts/**/.gitignore
+/data/**
+!/data/**/
+!/data/**/*.dvc
+!/data/**/.gitignore
 /models/
 /checkpoints/
 /outputs/

@@ -10,8 +10,12 @@ test_path: ${data.output_dir}/test.csv
 metadata_path: ${data.output_dir}/metadata.json
 
 local_paths: []
-local_source_name: null
-local_license: none
+local_pre_split: true
+local_train_path: data/external/hf_splits/train.parquet
+local_val_path: data/external/hf_splits/validation.parquet
+local_test_path: data/external/hf_splits/test.parquet
+local_source_name: sinatras/isogram-ai-text-detection-splits
+local_license: other
 local_sample_rows: null
 
 hf_dataset: sinatras/isogram-ai-text-detection-splits
@@ -23,7 +27,7 @@ hf_val_split: validation
 hf_test_split: test
 hf_sample_rows: 60000
 hf_shuffle_buffer: 10000
-skip_hf: false
+skip_hf: true
 
 val_fraction: 0.1
 test_fraction: 0.1

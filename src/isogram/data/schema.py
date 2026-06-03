@@ -214,3 +214,23 @@ def find_csv(raw_path: Path) -> Path:
     if not csv_files:
         raise FileNotFoundError(f"No CSV files found below {raw_path}")
     return csv_files[0]
+
+
+def find_tabular(raw_path: Path) -> Path:
+    if raw_path.is_file():
+        return raw_path
+    if not raw_path.exists():
+        raise FileNotFoundError(f"Raw path does not exist: {raw_path}")
+
+    for pattern in ("*.csv", "*.parquet"):
+        files = sorted(raw_path.rglob(pattern))
+        if files:
+            return files[0]
+    raise FileNotFoundError(f"No CSV or Parquet files found below {raw_path}")
+
+
+def read_tabular(raw_path: Path) -> pd.DataFrame:
+    path = find_tabular(raw_path)
+    if path.suffix == ".parquet":
+        return pd.read_parquet(path)
+    return pd.read_csv(path)

@@ -7,6 +7,7 @@ from typing import Any, cast
 import lightning.pytorch as pl
 import pandas as pd
 import torch
+from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
@@ -14,6 +15,7 @@ from torch.utils.data import DataLoader, Dataset
 from isogram.checkpoint import save_checkpoint
 from isogram.config import DEFAULT_SEED, ensure_parent, get_git_commit, set_seed, write_json
 from isogram.data.schema import sample_balanced_by_label
+from isogram.dvc import add_and_push_checkpoint
 from isogram.metrics import compute_classification_report
 from isogram.models.char_cnn import CharCnnClassifier, CharTokenizer
 from isogram.models.deberta import DebertaBatcher, DebertaTextClassifier
@@ -209,17 +211,20 @@ class LightningTextClassifier(pl.LightningModule):
         model_type: str,
         learning_rate: float,
         weight_decay: float,
+        max_epochs: int,
+        lr_scheduler: str,
+        min_lr_factor: float,
     ) -> None:
         super().__init__()
         self.model = model
         self.model_type = model_type
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
+        self.max_epochs = max_epochs
+        self.lr_scheduler = lr_scheduler
+        self.min_lr_factor = min_lr_factor
         self.criterion = nn.BCEWithLogitsLoss()
         self.history: list[dict[str, Any]] = []
-        self.best_metrics: dict[str, Any] | None = None
-        self.best_state_dict: dict[str, torch.Tensor] | None = None
-        self.best_score = -1.0
         self._train_losses: list[tuple[float, int]] = []
         self._val_losses: list[tuple[float, int]] = []
         self._val_labels: list[int] = []
@@ -285,21 +290,30 @@ class LightningTextClassifier(pl.LightningModule):
         if loggable:
             self.log_dict(loggable, on_epoch=True, on_step=False)
 
-        raw_score = report.get("roc_auc", report.get("f1", -1.0))
-        score = float(raw_score) if raw_score is not None else -1.0
-        if score > self.best_score:
-            self.best_score = score
-            self.best_metrics = record
-            self.best_state_dict = {
-                key: value.detach().cpu().clone() for key, value in self.model.state_dict().items()
-            }
-
-    def configure_optimizers(self) -> torch.optim.Optimizer:
-        return torch.optim.AdamW(
+    def configure_optimizers(self) -> Any:
+        optimizer = torch.optim.AdamW(
             self.model.parameters(),
             lr=self.learning_rate,
             weight_decay=self.weight_decay,
         )
+        scheduler_name = self.lr_scheduler.strip().lower()
+        if scheduler_name in {"", "none", "disabled"}:
+            return optimizer
+        if scheduler_name != "cosine":
+            raise ValueError(f"Unknown lr_scheduler: {self.lr_scheduler}")
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=max(1, self.max_epochs),
+            eta_min=self.learning_rate * self.min_lr_factor,
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "epoch",
+                "frequency": 1,
+            },
+        }
 
 
 def _weighted_average(parts: list[tuple[float, int]]) -> float | None:
@@ -403,6 +417,76 @@ def _log_artifacts(mlflow_logger: Any | None, paths: list[Path], *, artifact_pat
             )
 
 
+def _history_key_for_monitor(monitor: str) -> str:
+    if monitor in {"val_loss", "val_loss_epoch"}:
+        return "val_loss"
+    return monitor[4:] if monitor.startswith("val_") else monitor
+
+
+def _select_best_metrics(
+    history: list[dict[str, Any]],
+    *,
+    monitor: str,
+    mode: str,
+) -> dict[str, Any]:
+    if not history:
+        return {}
+    key = _history_key_for_monitor(monitor)
+    candidates = [record for record in history if isinstance(record.get(key), int | float)]
+    if not candidates:
+        return history[-1]
+    selector = min if mode == "min" else max
+    return selector(candidates, key=lambda record: float(record[key]))
+
+
+def _build_callbacks(
+    *,
+    trainer_cfg: Any,
+    checkpoint_dir: Path,
+    run_name: str,
+) -> tuple[list[Any], ModelCheckpoint]:
+    monitor = str(cfg_get(trainer_cfg, "checkpoint_monitor", "val_roc_auc"))
+    mode = str(cfg_get(trainer_cfg, "checkpoint_mode", "max"))
+    filename = f"{run_name}" + "-{epoch:02d}-{" + f"{monitor}:.4f" + "}"
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=str(checkpoint_dir),
+        filename=filename,
+        monitor=monitor,
+        mode=mode,
+        save_top_k=1,
+        save_last=False,
+        auto_insert_metric_name=False,
+    )
+    callbacks: list[Any] = [checkpoint_callback]
+
+    patience = cfg_get(trainer_cfg, "early_stopping_patience", None)
+    if patience is not None and int(patience) >= 0:
+        callbacks.append(
+            EarlyStopping(
+                monitor=monitor,
+                mode=mode,
+                patience=int(patience),
+                min_delta=float(cfg_get(trainer_cfg, "early_stopping_min_delta", 0.0)),
+            )
+        )
+
+    if bool(cfg_get(trainer_cfg, "learning_rate_monitor", True)):
+        callbacks.append(LearningRateMonitor(logging_interval="epoch"))
+    return callbacks, checkpoint_callback
+
+
+def _load_best_lightning_checkpoint(
+    lightning_model: LightningTextClassifier,
+    checkpoint_callback: ModelCheckpoint,
+) -> Path | None:
+    if not checkpoint_callback.best_model_path:
+        return None
+    best_path = Path(checkpoint_callback.best_model_path)
+    payload = torch.load(best_path, map_location="cpu")
+    lightning_model.load_state_dict(payload["state_dict"])
+    return best_path
+
+
 def train_from_config(cfg: Any) -> dict[str, Any]:
     data_cfg = cfg.data
     model_cfg = cfg.model
@@ -423,6 +507,15 @@ def train_from_config(cfg: Any) -> dict[str, Any]:
     checkpoint_path = Path(
         str(cfg_get(paths_cfg, "checkpoint", f"artifacts/checkpoints/{model_type}_{data_name}.pt"))
     )
+    lightning_checkpoint_dir = Path(
+        str(
+            cfg_get(
+                paths_cfg,
+                "lightning_checkpoint_dir",
+                "artifacts/lightning_checkpoints",
+            )
+        )
+    )
     report_path = Path(str(cfg_get(paths_cfg, "training_report", f"reports/{run_name}.json")))
     run_config_path = Path(
         str(cfg_get(paths_cfg, "run_config", f"reports/run_configs/{run_name}.yaml"))
@@ -439,11 +532,15 @@ def train_from_config(cfg: Any) -> dict[str, Any]:
         limit_rows=cfg_get(trainer_cfg, "limit_rows", None),
         seed=seed,
     )
+    max_epochs = int(cfg_get(model_cfg, "max_epochs", cfg_get(model_cfg, "epochs", 1)))
     lightning_model = LightningTextClassifier(
         model=model,
         model_type=model_type,
         learning_rate=float(cfg_get(model_cfg, "learning_rate", 1e-3)),
         weight_decay=float(cfg_get(model_cfg, "weight_decay", 0.0)),
+        max_epochs=max_epochs,
+        lr_scheduler=str(cfg_get(trainer_cfg, "lr_scheduler", "cosine")),
+        min_lr_factor=float(cfg_get(trainer_cfg, "min_lr_factor", 0.1)),
     )
 
     git_commit = get_git_commit()
@@ -457,9 +554,13 @@ def train_from_config(cfg: Any) -> dict[str, Any]:
                 "val_path": val_path,
                 "batch_size": int(cfg_get(model_cfg, "batch_size", 32)),
                 "learning_rate": float(cfg_get(model_cfg, "learning_rate", 1e-3)),
-                "max_epochs": int(
-                    cfg_get(model_cfg, "max_epochs", cfg_get(model_cfg, "epochs", 1))
+                "max_epochs": max_epochs,
+                "lr_scheduler": str(cfg_get(trainer_cfg, "lr_scheduler", "cosine")),
+                "min_lr_factor": float(cfg_get(trainer_cfg, "min_lr_factor", 0.1)),
+                "checkpoint_monitor": str(
+                    cfg_get(trainer_cfg, "checkpoint_monitor", "val_roc_auc")
                 ),
+                "checkpoint_mode": str(cfg_get(trainer_cfg, "checkpoint_mode", "max")),
                 "limit_rows": cfg_get(trainer_cfg, "limit_rows", None),
                 "seed": seed,
                 "git_commit": git_commit,
@@ -471,14 +572,20 @@ def train_from_config(cfg: Any) -> dict[str, Any]:
         if bool(cfg_get(model_cfg, "amp", False))
         else str(cfg_get(trainer_cfg, "precision", "32-true"))
     )
+    callbacks, checkpoint_callback = _build_callbacks(
+        trainer_cfg=trainer_cfg,
+        checkpoint_dir=lightning_checkpoint_dir,
+        run_name=run_name,
+    )
     trainer = pl.Trainer(
         accelerator=str(cfg_get(trainer_cfg, "accelerator", "auto")),
         devices=cfg_get(trainer_cfg, "devices", "auto"),
-        max_epochs=int(cfg_get(model_cfg, "max_epochs", cfg_get(model_cfg, "epochs", 1))),
+        max_epochs=max_epochs,
         accumulate_grad_batches=int(cfg_get(trainer_cfg, "grad_accum_steps", 1)),
         precision=cast(Any, precision),
         logger=loggers,
-        enable_checkpointing=False,
+        callbacks=callbacks,
+        enable_checkpointing=True,
         enable_progress_bar=bool(cfg_get(trainer_cfg, "enable_progress_bar", True)),
         log_every_n_steps=int(cfg_get(trainer_cfg, "log_every_n_steps", 10)),
         deterministic=bool(cfg_get(trainer_cfg, "deterministic", True)),
@@ -486,11 +593,15 @@ def train_from_config(cfg: Any) -> dict[str, Any]:
     )
     trainer.fit(lightning_model, datamodule=data_module)
 
-    if lightning_model.best_state_dict is not None:
-        lightning_model.model.load_state_dict(lightning_model.best_state_dict)
-
-    best_metrics = lightning_model.best_metrics or (
-        lightning_model.history[-1] if lightning_model.history else {}
+    best_lightning_checkpoint = _load_best_lightning_checkpoint(
+        lightning_model,
+        checkpoint_callback,
+    )
+    lightning_model.to("cpu")
+    best_metrics = _select_best_metrics(
+        lightning_model.history,
+        monitor=str(cfg_get(trainer_cfg, "checkpoint_monitor", "val_roc_auc")),
+        mode=str(cfg_get(trainer_cfg, "checkpoint_mode", "max")),
     )
     threshold = float(best_metrics.get("threshold", 0.5))
     save_checkpoint(
@@ -502,6 +613,7 @@ def train_from_config(cfg: Any) -> dict[str, Any]:
         threshold=threshold,
         model_version=str(cfg_get(model_cfg, "model_version", f"{model_type}-v1")),
     )
+    checkpoint_synced = add_and_push_checkpoint(checkpoint_path, cfg_get(cfg, "dvc", {}))
 
     _save_resolved_config(cfg, run_config_path)
     plot_paths = write_training_plots(
@@ -511,12 +623,18 @@ def train_from_config(cfg: Any) -> dict[str, Any]:
         "model": model_type,
         "model_version": str(cfg_get(model_cfg, "model_version", f"{model_type}-v1")),
         "checkpoint": str(checkpoint_path),
+        "lightning_checkpoint": str(best_lightning_checkpoint)
+        if best_lightning_checkpoint is not None
+        else None,
+        "checkpoint_monitor": str(cfg_get(trainer_cfg, "checkpoint_monitor", "val_roc_auc")),
+        "checkpoint_mode": str(cfg_get(trainer_cfg, "checkpoint_mode", "max")),
         "train_path": str(train_path),
         "val_path": str(val_path),
         "git_commit": git_commit,
         "best_metrics": best_metrics,
         "history": lightning_model.history,
         "plots": [str(path) for path in plot_paths],
+        "dvc": {"checkpoint_synced": checkpoint_synced},
     }
     write_json(report_path, report)
 
@@ -531,6 +649,11 @@ def train_from_config(cfg: Any) -> dict[str, Any]:
                     )
         _log_artifacts(mlflow_logger, [report_path], artifact_path="reports")
         _log_artifacts(mlflow_logger, [checkpoint_path], artifact_path="checkpoints")
+        _log_artifacts(
+            mlflow_logger,
+            [best_lightning_checkpoint] if best_lightning_checkpoint is not None else [],
+            artifact_path="lightning_checkpoints",
+        )
         _log_artifacts(mlflow_logger, [run_config_path], artifact_path="config")
         _log_artifacts(mlflow_logger, plot_paths, artifact_path="plots")
 

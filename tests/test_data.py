@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from isogram.data import build_dataset as build_dataset_module
 from isogram.data.build_dataset import (
@@ -8,6 +9,7 @@ from isogram.data.build_dataset import (
     build_training_dataset,
     load_local_source,
 )
+from isogram.data.download import download_data
 from isogram.data.licenses import filter_permissive_source_rows
 from isogram.data.schema import (
     normalize_frame,
@@ -129,6 +131,86 @@ def test_build_training_dataset_from_local_source(tmp_path) -> None:
         split_frame = pd.read_csv(output_dir / f"{split}.csv")
         assert tuple(split_frame.columns) == STANDARDIZED_OUTPUT_COLUMNS
         assert set(split_frame["label"]) == {0, 1}
+
+
+def test_build_training_dataset_from_local_presplit_parquet(tmp_path) -> None:
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    for split, rows in {"train": 4, "validation": 2, "test": 2}.items():
+        pd.DataFrame(
+            {
+                "text": [
+                    f"{split} {'human' if index % 2 == 0 else 'ai'} {index}"
+                    for index in range(rows)
+                ],
+                "label": [0, 1] * (rows // 2),
+                "source_dataset": ["example/hf-splits"] * rows,
+                "source_detail": [split] * rows,
+                "source_license": ["mit"] * rows,
+                "upstream_url": ["https://example.test"] * rows,
+            }
+        ).to_parquet(raw_dir / f"{split}.parquet", index=False)
+
+    output_dir = tmp_path / "processed"
+    metadata = build_training_dataset(
+        output_dir=output_dir,
+        local_paths=[
+            raw_dir / "train.parquet",
+            raw_dir / "validation.parquet",
+            raw_dir / "test.parquet",
+        ],
+        local_source_name="example/hf-splits",
+        local_license="mit",
+        local_sample_rows=6,
+        local_pre_split=True,
+        local_train_path=raw_dir / "train.parquet",
+        local_val_path=raw_dir / "validation.parquet",
+        local_test_path=raw_dir / "test.parquet",
+        hf_dataset="unused",
+        hf_split="train",
+        hf_sample_rows=999,
+        hf_license="mit",
+        hf_shuffle_buffer=1,
+        skip_hf=True,
+        val_fraction=0.1,
+        test_fraction=0.1,
+        seed=42,
+    )
+
+    assert metadata["rows_total"] == 6
+    assert metadata["rows_train"] == 2
+    assert metadata["rows_val"] == 2
+    assert metadata["rows_test"] == 2
+    assert metadata["sources"][0]["kind"] == "dvc_local_presplit"
+    assert metadata["sources"][0]["sample_rows"] == 6
+    assert pd.read_csv(output_dir / "train.csv")["text"].str.startswith("train").all()
+    assert pd.read_csv(output_dir / "val.csv")["text"].str.startswith("validation").all()
+    assert pd.read_csv(output_dir / "test.csv")["text"].str.startswith("test").all()
+
+
+def test_download_data_reports_missing_local_presplit_after_dvc_restore(tmp_path) -> None:
+    missing_train = tmp_path / "train.parquet"
+    missing_val = tmp_path / "validation.parquet"
+    missing_test = tmp_path / "test.parquet"
+
+    with pytest.raises(FileNotFoundError) as exc_info:
+        download_data(
+            {
+                "output_dir": str(tmp_path / "processed"),
+                "local_pre_split": True,
+                "local_train_path": str(missing_train),
+                "local_val_path": str(missing_val),
+                "local_test_path": str(missing_test),
+                "local_source_name": "example/hf-splits",
+                "local_license": "mit",
+                "skip_hf": True,
+            },
+            dvc_cfg={"enabled": False},
+        )
+
+    message = str(exc_info.value)
+    assert "Configured local pre-split data files are missing after DVC restore" in message
+    assert str(missing_train) in message
 
 
 def test_license_filter_drops_non_permissive_daigt_sources() -> None:

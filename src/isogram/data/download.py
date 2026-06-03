@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
-import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from isogram.dvc import pull_data_artifacts, restore_dvc_imports
 from isogram.data.build_dataset import (
     DEFAULT_HF_DATASET,
     DEFAULT_HF_LICENSE,
@@ -46,7 +44,19 @@ def _configured_local_paths(data_cfg: Any) -> list[Path]:
     singular = cfg_get(data_cfg, "local_path", None)
     if singular is not None:
         paths.extend(_path_list(singular))
+    paths.extend(_configured_presplit_paths(data_cfg))
     return paths
+
+
+def _configured_presplit_paths(data_cfg: Any) -> list[Path]:
+    if bool(cfg_get(data_cfg, "local_pre_split", False)):
+        paths: list[Path] = []
+        for key in ("local_train_path", "local_val_path", "local_test_path"):
+            value = cfg_get(data_cfg, key, None)
+            if value is not None:
+                paths.append(Path(str(value)))
+        return paths
+    return []
 
 
 def split_paths(data_cfg: Any) -> list[Path]:
@@ -76,24 +86,25 @@ def _read_metadata(data_cfg: Any) -> dict[str, Any]:
         return dict(json.load(handle))
 
 
-def _dvc_executable() -> str | None:
-    candidate = Path(sys.executable).with_name("dvc")
-    if candidate.exists():
-        return str(candidate)
-    return shutil.which("dvc")
+def pull_data_with_dvc(data_cfg: Any, dvc_cfg: Any) -> bool:
+    return pull_data_artifacts(dvc_cfg, targets=[*split_paths(data_cfg), _metadata_path(data_cfg)])
 
 
-def pull_data_with_dvc(data_cfg: Any) -> bool:
-    executable = _dvc_executable()
-    if executable is None:
-        return False
-    command = [executable, "pull", *[str(path) for path in split_paths(data_cfg)]]
-    result = subprocess.run(command, check=False)
-    return result.returncode == 0
+def download_data(data_cfg: Any, dvc_cfg: Any | None = None) -> dict[str, Any]:
+    configured_local_paths = _configured_local_paths(data_cfg)
+    if dvc_cfg is not None and configured_local_paths:
+        restore_dvc_imports(configured_local_paths, dvc_cfg)
 
+    if bool(cfg_get(data_cfg, "local_pre_split", False)):
+        missing = [path for path in _configured_presplit_paths(data_cfg) if not path.exists()]
+        if missing:
+            missing_paths = ", ".join(str(path) for path in missing)
+            raise FileNotFoundError(
+                "Configured local pre-split data files are missing after DVC restore: "
+                f"{missing_paths}"
+            )
 
-def download_data(data_cfg: Any) -> dict[str, Any]:
-    local_paths = [path for path in _configured_local_paths(data_cfg) if path.exists()]
+    local_paths = [path for path in configured_local_paths if path.exists()]
     if not local_paths:
         print("No configured local source exists; building from the public Hugging Face source.")
 
@@ -103,6 +114,10 @@ def download_data(data_cfg: Any) -> dict[str, Any]:
         local_source_name=cfg_get(data_cfg, "local_source_name", None),
         local_license=str(cfg_get(data_cfg, "local_license", "unverified")),
         local_sample_rows=cfg_get(data_cfg, "local_sample_rows", None),
+        local_pre_split=bool(cfg_get(data_cfg, "local_pre_split", False)),
+        local_train_path=cfg_get(data_cfg, "local_train_path", None),
+        local_val_path=cfg_get(data_cfg, "local_val_path", None),
+        local_test_path=cfg_get(data_cfg, "local_test_path", None),
         hf_dataset=str(cfg_get(data_cfg, "hf_dataset", DEFAULT_HF_DATASET)),
         hf_split=str(cfg_get(data_cfg, "hf_split", DEFAULT_HF_SPLIT)),
         hf_sample_rows=int(cfg_get(data_cfg, "hf_sample_rows", DEFAULT_HF_SAMPLE_ROWS)),
@@ -128,8 +143,8 @@ def ensure_dataset(cfg: Any, *, rebuild: bool = False) -> dict[str, Any]:
     dvc_cfg = cfg_get(cfg, "dvc", {})
     use_dvc = bool(cfg_get(dvc_cfg, "enabled", cfg_get(data_cfg, "use_dvc", True)))
     if not rebuild and use_dvc:
-        pull_data_with_dvc(data_cfg)
+        pull_data_with_dvc(data_cfg, dvc_cfg)
         if dataset_ready(data_cfg):
             return _read_metadata(data_cfg)
 
-    return download_data(data_cfg)
+    return download_data(data_cfg, dvc_cfg=dvc_cfg if use_dvc else None)

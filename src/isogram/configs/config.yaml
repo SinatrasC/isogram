@@ -14,3 +14,4 @@ paths:
   run_config: reports/run_configs/${model.name}_${data.name}.yaml
   report_dir: reports
   plot_dir: plots
+  lightning_checkpoint_dir: artifacts/lightning_checkpoints

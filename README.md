@@ -20,17 +20,19 @@ The service returns:
 
 ## Data
 
-The default dataset builder creates standardized CSV splits under `data/processed/main/`. It downloads the project dataset from Hugging Face:
+The default dataset builder creates standardized CSV splits under `data/processed/main/`. Hugging Face is the upstream public source:
 
 - `sinatras/isogram-ai-text-detection-splits`
 
 The downloaded data is already split into train/validation/test partitions and keeps provenance columns: `source_dataset`, `source_detail`, `source_license`, and `upstream_url`.
 
+DVC is the loader/cache layer for the project data. The raw Hugging Face Parquet split files are tracked as DVC URL imports under `data/external/hf_splits/`. The data command first tries to restore processed splits from the configured DVC `data` remote; if they are missing, it restores the DVC-imported Hugging Face files and builds the standardized CSV splits from those local DVC-managed files.
+
 ## Models
 
 The baseline model is a character-level CNN trained with binary cross-entropy. It is intentionally small, fast on CPU, and gives a real model score rather than a dummy baseline.
 
-The main model is a DeBERTa-v3-base encoder with a one-logit classification head. Training uses PyTorch Lightning, AdamW, BCEWithLogitsLoss, and sigmoid probabilities at inference.
+The main model is a DeBERTa-v3-base encoder with a one-logit classification head. Training uses PyTorch Lightning, AdamW, a cosine learning-rate scheduler, Lightning `ModelCheckpoint` and `EarlyStopping` callbacks, BCEWithLogitsLoss, and sigmoid probabilities at inference.
 
 ## Metrics
 
@@ -56,12 +58,12 @@ Build or fetch the default dataset:
 uv run isogram data
 ```
 
-The command first tries DVC pull for the configured split files. If they are not available in local DVC storage, it calls the public download/build path.
+The command first tries DVC pull for the configured processed split files. If they are not available in local DVC storage, it restores the DVC URL imports from Hugging Face and builds the processed splits.
 
 To force a rebuild with a smaller sample:
 
 ```bash
-uv run isogram data data.hf_sample_rows=2000 --rebuild=True
+uv run isogram data data.local_sample_rows=2000 --rebuild=True
 ```
 
 ## Training
@@ -100,7 +102,7 @@ For a quick local smoke run without an MLflow server:
 uv run isogram train model=char_cnn trainer.limit_rows=512 model.max_epochs=3 logging.enabled=false
 ```
 
-Training writes checkpoints to `artifacts/checkpoints/`, reports to `reports/`, resolved Hydra configs to `reports/run_configs/`, and three plot files to `plots/`.
+Training writes Lightning checkpoints to `artifacts/lightning_checkpoints/`, exports serving checkpoints to `artifacts/checkpoints/`, writes reports to `reports/`, resolved Hydra configs to `reports/run_configs/`, and three plot files to `plots/`. When DVC is enabled, the exported serving checkpoint is also tracked and pushed to the configured DVC `models` remote.
 
 ## Evaluation
 
@@ -108,7 +110,7 @@ Training writes checkpoints to `artifacts/checkpoints/`, reports to `reports/`, 
 uv run isogram evaluate model=char_cnn logging.enabled=false
 ```
 
-The evaluation command uses the configured checkpoint and test split, then writes a metrics report under `reports/`.
+The evaluation command uses the configured checkpoint and test split, then writes a metrics report under `reports/`. If the checkpoint is not present locally and DVC is enabled, the command first tries to restore it from the configured DVC `models` remote.
 
 ## Serving
 
@@ -137,11 +139,32 @@ Reproduce the data stage:
 uv run dvc repro build_dataset
 ```
 
-Push artifacts to the configured local DVC data remote:
+Refresh the DVC URL imports directly from Hugging Face:
 
 ```bash
-uv run dvc push -r data
+uv run dvc update data/external/hf_splits/train.parquet.dvc
+uv run dvc update data/external/hf_splits/validation.parquet.dvc
+uv run dvc update data/external/hf_splits/test.parquet.dvc
 ```
+
+Push processed data to the configured local DVC data remote:
+
+```bash
+uv run dvc push -r data \
+  data/external/hf_splits/train.parquet.dvc \
+  data/external/hf_splits/validation.parquet.dvc \
+  data/external/hf_splits/test.parquet.dvc \
+  build_dataset
+```
+
+Model checkpoints use the separate DVC models remote. Training performs this automatically when `dvc.push_models=true`; the equivalent manual commands are:
+
+```bash
+uv run dvc add artifacts/checkpoints/char_cnn_main.pt
+uv run dvc push -r models artifacts/checkpoints/char_cnn_main.pt.dvc
+```
+
+The `.pt` payload stays out of Git; only the generated `.dvc` pointer should be committed when you want that checkpoint to be part of the repository state.
 
 ## Quality Checks
 

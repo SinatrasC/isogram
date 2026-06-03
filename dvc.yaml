@@ -2,8 +2,16 @@ stages:
   build_dataset:
     cmd: >-
       python -m isogram.commands data
-      dvc.enabled=false
+      dvc.enabled=true
+      dvc.pull_data=false
+      dvc.pull_imports=true
       data.output_dir=${data.output_dir}
+      data.local_pre_split=${data.local_pre_split}
+      data.local_train_path=${data.local_train_path}
+      data.local_val_path=${data.local_val_path}
+      data.local_test_path=${data.local_test_path}
+      data.local_source_name=${data.local_source_name}
+      data.local_license=${data.local_license}
       data.hf_dataset=${data.hf_dataset}
       data.hf_split=${data.hf_split}
       data.hf_license=${data.hf_license}
@@ -13,16 +21,21 @@ stages:
       data.hf_test_split=${data.hf_test_split}
       data.hf_sample_rows=${data.hf_sample_rows}
       data.hf_shuffle_buffer=${data.hf_shuffle_buffer}
+      data.skip_hf=${data.skip_hf}
       data.val_fraction=${data.val_fraction}
       data.test_fraction=${data.test_fraction}
       data.seed=${data.seed}
     deps:
       - configs
+      - data/external/hf_splits/train.parquet
+      - data/external/hf_splits/validation.parquet
+      - data/external/hf_splits/test.parquet
       - src/isogram/commands.py
       - src/isogram/data/build_dataset.py
       - src/isogram/data/download.py
       - src/isogram/data/schema.py
       - src/isogram/data/splits.py
+      - src/isogram/dvc.py
     params:
       - data
     outs:

@@ -13,6 +13,7 @@ from isogram.data.schema import (
     LABEL_COLUMNS,
     TEXT_COLUMNS,
     find_csv,
+    read_tabular,
     normalize_frame,
     normalize_label,
     sample_balanced_by_label,
@@ -350,6 +351,104 @@ def load_local_source(
     return sampled, metadata
 
 
+def load_local_split(
+    *,
+    raw_path: Path,
+    source_name: str,
+    declared_license: str,
+    split: str,
+) -> pd.DataFrame:
+    frame = read_tabular(raw_path)
+    normalized = normalize_frame(frame)
+    if "source_dataset" not in normalized.columns or normalized["source_dataset"].eq("").all():
+        normalized["source_dataset"] = source_name
+    if "source_detail" not in normalized.columns or normalized["source_detail"].eq("").all():
+        normalized["source_detail"] = source_name
+    if "source_license" not in normalized.columns or normalized["source_license"].eq("").all():
+        normalized["source_license"] = declared_license
+    if "upstream_url" not in normalized.columns:
+        normalized["upstream_url"] = ""
+    normalized["source_split"] = split
+    return normalized
+
+
+def build_local_split_dataset(
+    *,
+    output_dir: Path,
+    train_path: Path,
+    val_path: Path,
+    test_path: Path,
+    source_name: str,
+    declared_license: str,
+    sample_rows: int | None,
+    val_fraction: float,
+    test_fraction: float,
+    seed: int,
+) -> dict[str, object]:
+    train = load_local_split(
+        raw_path=train_path,
+        source_name=source_name,
+        declared_license=declared_license,
+        split="train",
+    )
+    val = load_local_split(
+        raw_path=val_path,
+        source_name=source_name,
+        declared_license=declared_license,
+        split="validation",
+    )
+    test = load_local_split(
+        raw_path=test_path,
+        source_name=source_name,
+        declared_license=declared_license,
+        split="test",
+    )
+    combined = pd.concat([train, val, test], ignore_index=True, sort=False)
+    sampled_rows_by_split: dict[str, int] | None = None
+
+    if sample_rows is not None and sample_rows < len(combined):
+        train, val, test, sampled_rows_by_split = _sample_presplit_frames(
+            train=train,
+            val=val,
+            test=test,
+            sample_rows=sample_rows,
+            seed=seed,
+        )
+
+    split_metadata = _write_presplit_dataset(
+        output_dir=output_dir,
+        train=train,
+        val=val,
+        test=test,
+    )
+    rows_total = split_metadata["rows_total"]
+    rows_used = rows_total if isinstance(rows_total, int) else int(str(rows_total))
+    metadata = {
+        "seed": seed,
+        "val_fraction": val_fraction,
+        "test_fraction": test_fraction,
+        "sources": [
+            {
+                "kind": "dvc_local_presplit",
+                "source_name": source_name,
+                "declared_license": declared_license,
+                "train_path": str(train_path),
+                "val_path": str(val_path),
+                "test_path": str(test_path),
+                "sample_rows": sample_rows,
+                "rows_used": rows_used,
+                "sampled_rows_by_split": sampled_rows_by_split,
+            }
+        ],
+        "rows_before_cross_source_deduplication": int(len(combined)),
+        "rows_with_conflicting_labels_removed": 0,
+        "duplicate_text_rows_removed": 0,
+        **split_metadata,
+    }
+    write_json(output_dir / "metadata.json", metadata)
+    return metadata
+
+
 def remove_cross_source_duplicates(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
     conflict_mask = frame.groupby("text")["label"].transform("nunique") > 1
     rows_with_conflicting_labels = int(conflict_mask.sum())
@@ -431,6 +530,10 @@ def build_training_dataset(
     local_source_name: str | None,
     local_license: str,
     local_sample_rows: int | None,
+    local_pre_split: bool = False,
+    local_train_path: str | Path | None = None,
+    local_val_path: str | Path | None = None,
+    local_test_path: str | Path | None = None,
     hf_dataset: str,
     hf_split: str,
     hf_sample_rows: int,
@@ -445,6 +548,25 @@ def build_training_dataset(
     hf_val_split: str = DEFAULT_HF_VAL_SPLIT,
     hf_test_split: str = DEFAULT_HF_TEST_SPLIT,
 ) -> dict[str, object]:
+    if local_pre_split:
+        if not local_train_path or not local_val_path or not local_test_path:
+            raise ValueError(
+                "local_pre_split requires local_train_path, local_val_path, and local_test_path"
+            )
+        sample_rows = local_sample_rows if local_sample_rows is not None else hf_sample_rows
+        return build_local_split_dataset(
+            output_dir=output_dir,
+            train_path=Path(local_train_path),
+            val_path=Path(local_val_path),
+            test_path=Path(local_test_path),
+            source_name=local_source_name or hf_dataset,
+            declared_license=local_license,
+            sample_rows=sample_rows,
+            val_fraction=val_fraction,
+            test_fraction=test_fraction,
+            seed=seed,
+        )
+
     if hf_pre_split and not skip_hf and not local_paths:
         return build_hf_split_dataset(
             output_dir=output_dir,
@@ -524,6 +646,10 @@ def main(
     output_dir: str | Path = CommonPaths().processed_dir,
     local_path: str | Path | list[str | Path] | None = None,
     local_sample_rows: int | None = None,
+    local_pre_split: bool = False,
+    local_train_path: str | Path | None = None,
+    local_val_path: str | Path | None = None,
+    local_test_path: str | Path | None = None,
     local_source_name: str | None = None,
     local_license: str = "unverified",
     hf_dataset: str = DEFAULT_HF_DATASET,
@@ -552,6 +678,10 @@ def main(
         local_source_name=local_source_name,
         local_license=local_license,
         local_sample_rows=local_sample_rows,
+        local_pre_split=local_pre_split,
+        local_train_path=local_train_path,
+        local_val_path=local_val_path,
+        local_test_path=local_test_path,
         hf_dataset=hf_dataset,
         hf_split=hf_split,
         hf_sample_rows=hf_sample_rows,
