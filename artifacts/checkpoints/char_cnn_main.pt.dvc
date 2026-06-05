@@ -1,0 +1,5 @@
+outs:
+- md5: 0b77a6ee6c013caa6b98119534acdb61
+  size: 518325
+  hash: md5
+  path: char_cnn_main.pt

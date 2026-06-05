@@ -1,4 +1,3 @@
-artifacts/checkpoints/
 mlruns/
 .venv/
 __pycache__/

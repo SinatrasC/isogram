@@ -52,7 +52,7 @@ The latest full sweep was run on the 6,000-row held-out test split from `sinatra
 | `char_cnn_lr5e-4_do0.2_ch128`       |     0.97213 |     0.96966 |     0.91186 |     0.87079 | **0.95700** |     0.06784 |
 | `char_cnn_lr1e-3_do0.2_ch96`        |     0.97201 |     0.96997 |     0.91102 |     0.88056 |     0.94367 | **0.06495** |
 
-The strongest overall model is DeBERTa with learning rate `3e-5`, dropout `0.2`, batch size `64`, and two epochs. The strongest baseline is the character CNN with learning rate `1e-3`, dropout `0.1`, and `128` channels.
+The strongest overall model is DeBERTa with learning rate `3e-5`, dropout `0.2`, batch size `64`, and two epochs. This run is promoted as the default serving checkpoint at `artifacts/checkpoints/deberta_main.pt`. The strongest baseline is the character CNN with learning rate `1e-3`, dropout `0.1`, and `128` channels; it is promoted at `artifacts/checkpoints/char_cnn_main.pt`.
 
 ## Setup
 
@@ -131,7 +131,7 @@ The evaluation command uses the configured checkpoint and test split, then write
 ## Serving
 
 ```bash
-uv run isogram serve model=char_cnn serve.checkpoint=artifacts/checkpoints/char_cnn_main.pt
+uv run isogram serve model=deberta serve.checkpoint=artifacts/checkpoints/deberta_main.pt
 ```
 
 Open `http://127.0.0.1:8000`, or call:
@@ -176,6 +176,9 @@ uv run dvc push -r data \
 Model checkpoints use the separate DVC models remote. Training performs this automatically when `dvc.push_models=true`; the equivalent manual commands are:
 
 ```bash
+uv run dvc add artifacts/checkpoints/deberta_main.pt
+uv run dvc push -r models artifacts/checkpoints/deberta_main.pt.dvc
+
 uv run dvc add artifacts/checkpoints/char_cnn_main.pt
 uv run dvc push -r models artifacts/checkpoints/char_cnn_main.pt.dvc
 ```
