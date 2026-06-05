@@ -38,6 +38,22 @@ The main model is a DeBERTa-v3-base encoder with a one-logit classification head
 
 Training and evaluation report ROC-AUC, PR-AUC, precision, recall, F1, Brier score, threshold counts, and validation loss. These cover ranking quality, threshold behavior, calibration, and loss optimization.
 
+## Final Results
+
+The latest full sweep was run on the 6,000-row held-out test split from `sinatras/isogram-ai-text-detection-splits`. The best-performing values in each metric column are bolded.
+
+| Run                                 |     ROC-AUC |      PR-AUC |          F1 |   Precision |      Recall | Brier score |
+| ----------------------------------- | ----------: | ----------: | ----------: | ----------: | ----------: | ----------: |
+| **`deberta_lr3e-5_do0.2_bs64_ep2`** | **0.99968** | **0.99968** | **0.98925** |     0.98194 | **0.99667** |     0.00868 |
+| `deberta_lr2e-5_do0.2_bs64_ep2`     |     0.99959 |     0.99959 |     0.98903 | **0.98608** |     0.99200 | **0.00817** |
+| `deberta_lr1e-5_do0.1_bs64_ep2`     |     0.99958 |     0.99958 |     0.98838 |     0.98414 |     0.99267 |     0.00841 |
+| `deberta_lr2e-5_do0.2_bs16_ep2`     |     0.98510 |     0.98427 |     0.93770 |     0.90895 |     0.96833 |     0.04600 |
+| **`char_cnn_lr1e-3_do0.1_ch128`**   | **0.97542** | **0.97345** | **0.91775** | **0.89562** |     0.94100 |     0.06522 |
+| `char_cnn_lr5e-4_do0.2_ch128`       |     0.97213 |     0.96966 |     0.91186 |     0.87079 | **0.95700** |     0.06784 |
+| `char_cnn_lr1e-3_do0.2_ch96`        |     0.97201 |     0.96997 |     0.91102 |     0.88056 |     0.94367 | **0.06495** |
+
+The strongest overall model is DeBERTa with learning rate `3e-5`, dropout `0.2`, batch size `64`, and two epochs. The strongest baseline is the character CNN with learning rate `1e-3`, dropout `0.1`, and `128` channels.
+
 ## Setup
 
 Use Python 3.11 or newer. `uv` is the recommended dependency manager:
