@@ -22,7 +22,7 @@ The service returns:
 
 The default dataset builder creates standardized CSV splits under `data/processed/main/`. Hugging Face is the upstream public source:
 
-- `sinatras/isogram-ai-text-detection-splits`
+- [`sinatras/isogram-ai-text-detection-splits`](https://huggingface.co/datasets/sinatras/isogram-ai-text-detection-splits)
 
 The downloaded data is already split into train/validation/test partitions and keeps provenance columns: `source_dataset`, `source_detail`, `source_license`, and `upstream_url`.
 
