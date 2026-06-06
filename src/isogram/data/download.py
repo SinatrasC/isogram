@@ -5,19 +5,12 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from isogram.config import DataDefaults
 from isogram.dvc import pull_data_artifacts, restore_dvc_imports
-from isogram.data.build_dataset import (
-    DEFAULT_HF_DATASET,
-    DEFAULT_HF_LICENSE,
-    DEFAULT_HF_PRE_SPLIT,
-    DEFAULT_HF_SAMPLE_ROWS,
-    DEFAULT_HF_SHUFFLE_BUFFER,
-    DEFAULT_HF_SPLIT,
-    DEFAULT_HF_TEST_SPLIT,
-    DEFAULT_HF_TRAIN_SPLIT,
-    DEFAULT_HF_VAL_SPLIT,
-    build_training_dataset,
-)
+from isogram.data.build_dataset import build_training_dataset
+
+
+DATA_DEFAULTS = DataDefaults()
 
 
 def cfg_get(config: Any, key: str, default: Any = None) -> Any:
@@ -118,15 +111,17 @@ def download_data(data_cfg: Any, dvc_cfg: Any | None = None) -> dict[str, Any]:
         local_train_path=cfg_get(data_cfg, "local_train_path", None),
         local_val_path=cfg_get(data_cfg, "local_val_path", None),
         local_test_path=cfg_get(data_cfg, "local_test_path", None),
-        hf_dataset=str(cfg_get(data_cfg, "hf_dataset", DEFAULT_HF_DATASET)),
-        hf_split=str(cfg_get(data_cfg, "hf_split", DEFAULT_HF_SPLIT)),
-        hf_sample_rows=int(cfg_get(data_cfg, "hf_sample_rows", DEFAULT_HF_SAMPLE_ROWS)),
-        hf_license=str(cfg_get(data_cfg, "hf_license", DEFAULT_HF_LICENSE)),
-        hf_shuffle_buffer=int(cfg_get(data_cfg, "hf_shuffle_buffer", DEFAULT_HF_SHUFFLE_BUFFER)),
-        hf_pre_split=bool(cfg_get(data_cfg, "hf_pre_split", DEFAULT_HF_PRE_SPLIT)),
-        hf_train_split=str(cfg_get(data_cfg, "hf_train_split", DEFAULT_HF_TRAIN_SPLIT)),
-        hf_val_split=str(cfg_get(data_cfg, "hf_val_split", DEFAULT_HF_VAL_SPLIT)),
-        hf_test_split=str(cfg_get(data_cfg, "hf_test_split", DEFAULT_HF_TEST_SPLIT)),
+        hf_dataset=str(cfg_get(data_cfg, "hf_dataset", DATA_DEFAULTS.hf_dataset)),
+        hf_split=str(cfg_get(data_cfg, "hf_split", DATA_DEFAULTS.hf_split)),
+        hf_sample_rows=int(cfg_get(data_cfg, "hf_sample_rows", DATA_DEFAULTS.hf_sample_rows)),
+        hf_license=str(cfg_get(data_cfg, "hf_license", DATA_DEFAULTS.hf_license)),
+        hf_shuffle_buffer=int(
+            cfg_get(data_cfg, "hf_shuffle_buffer", DATA_DEFAULTS.hf_shuffle_buffer)
+        ),
+        hf_pre_split=bool(cfg_get(data_cfg, "hf_pre_split", DATA_DEFAULTS.hf_pre_split)),
+        hf_train_split=str(cfg_get(data_cfg, "hf_train_split", DATA_DEFAULTS.hf_train_split)),
+        hf_val_split=str(cfg_get(data_cfg, "hf_val_split", DATA_DEFAULTS.hf_val_split)),
+        hf_test_split=str(cfg_get(data_cfg, "hf_test_split", DATA_DEFAULTS.hf_test_split)),
         skip_hf=bool(cfg_get(data_cfg, "skip_hf", False)),
         val_fraction=float(cfg_get(data_cfg, "val_fraction", 0.1)),
         test_fraction=float(cfg_get(data_cfg, "test_fraction", 0.1)),

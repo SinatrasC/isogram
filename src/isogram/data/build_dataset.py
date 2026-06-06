@@ -7,7 +7,13 @@ from typing import Any, cast
 
 import pandas as pd
 
-from isogram.config import CommonPaths, TrainingDefaults, dataclass_to_jsonable, write_json
+from isogram.config import (
+    CommonPaths,
+    DataDefaults,
+    TrainingDefaults,
+    dataclass_to_jsonable,
+    write_json,
+)
 from isogram.data.licenses import filter_permissive_source_rows
 from isogram.data.schema import (
     LABEL_COLUMNS,
@@ -22,15 +28,7 @@ from isogram.data.schema import (
 from isogram.data.splits import Split
 
 
-DEFAULT_HF_DATASET = "sinatras/isogram-ai-text-detection-splits"
-DEFAULT_HF_LICENSE = "other"
-DEFAULT_HF_SPLIT = "train"
-DEFAULT_HF_SAMPLE_ROWS = 60_000
-DEFAULT_HF_SHUFFLE_BUFFER = 10_000
-DEFAULT_HF_PRE_SPLIT = True
-DEFAULT_HF_TRAIN_SPLIT = "train"
-DEFAULT_HF_VAL_SPLIT = "validation"
-DEFAULT_HF_TEST_SPLIT = "test"
+DATA_DEFAULTS = DataDefaults()
 
 STANDARDIZED_OUTPUT_COLUMNS = (
     "text",
@@ -543,10 +541,10 @@ def build_training_dataset(
     val_fraction: float,
     test_fraction: float,
     seed: int,
-    hf_pre_split: bool = DEFAULT_HF_PRE_SPLIT,
-    hf_train_split: str = DEFAULT_HF_TRAIN_SPLIT,
-    hf_val_split: str = DEFAULT_HF_VAL_SPLIT,
-    hf_test_split: str = DEFAULT_HF_TEST_SPLIT,
+    hf_pre_split: bool = DATA_DEFAULTS.hf_pre_split,
+    hf_train_split: str = DATA_DEFAULTS.hf_train_split,
+    hf_val_split: str = DATA_DEFAULTS.hf_val_split,
+    hf_test_split: str = DATA_DEFAULTS.hf_test_split,
 ) -> dict[str, object]:
     if local_pre_split:
         if not local_train_path or not local_val_path or not local_test_path:
@@ -652,15 +650,15 @@ def main(
     local_test_path: str | Path | None = None,
     local_source_name: str | None = None,
     local_license: str = "unverified",
-    hf_dataset: str = DEFAULT_HF_DATASET,
-    hf_split: str = DEFAULT_HF_SPLIT,
-    hf_sample_rows: int = DEFAULT_HF_SAMPLE_ROWS,
-    hf_license: str = DEFAULT_HF_LICENSE,
-    hf_shuffle_buffer: int = DEFAULT_HF_SHUFFLE_BUFFER,
-    hf_pre_split: bool = DEFAULT_HF_PRE_SPLIT,
-    hf_train_split: str = DEFAULT_HF_TRAIN_SPLIT,
-    hf_val_split: str = DEFAULT_HF_VAL_SPLIT,
-    hf_test_split: str = DEFAULT_HF_TEST_SPLIT,
+    hf_dataset: str = DATA_DEFAULTS.hf_dataset,
+    hf_split: str = DATA_DEFAULTS.hf_split,
+    hf_sample_rows: int = DATA_DEFAULTS.hf_sample_rows,
+    hf_license: str = DATA_DEFAULTS.hf_license,
+    hf_shuffle_buffer: int = DATA_DEFAULTS.hf_shuffle_buffer,
+    hf_pre_split: bool = DATA_DEFAULTS.hf_pre_split,
+    hf_train_split: str = DATA_DEFAULTS.hf_train_split,
+    hf_val_split: str = DATA_DEFAULTS.hf_val_split,
+    hf_test_split: str = DATA_DEFAULTS.hf_test_split,
     skip_hf: bool = False,
     val_fraction: float = 0.1,
     test_fraction: float = 0.1,

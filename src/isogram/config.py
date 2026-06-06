@@ -37,6 +37,19 @@ class TrainingDefaults:
     deberta_epochs: int = 3
 
 
+@dataclass(frozen=True)
+class DataDefaults:
+    hf_dataset: str = "sinatras/isogram-ai-text-detection-splits"
+    hf_license: str = "other"
+    hf_split: str = "train"
+    hf_sample_rows: int = 60_000
+    hf_shuffle_buffer: int = 10_000
+    hf_pre_split: bool = True
+    hf_train_split: str = "train"
+    hf_val_split: str = "validation"
+    hf_test_split: str = "test"
+
+
 def set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
