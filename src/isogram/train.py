@@ -5,12 +5,17 @@ from pathlib import Path
 from typing import Any, cast
 
 import lightning.pytorch as pl
+import matplotlib
+import numpy as np
 import pandas as pd
 import torch
 from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
 
 from isogram.checkpoint import save_checkpoint
 from isogram.config import DEFAULT_SEED, ensure_parent, get_git_commit, set_seed, write_json
@@ -317,9 +322,13 @@ class LightningTextClassifier(pl.LightningModule):
 
 
 def _weighted_average(parts: list[tuple[float, int]]) -> float | None:
-    total = sum(value * count for value, count in parts)
-    count = sum(count for _, count in parts)
-    return total / count if count else None
+    if not parts:
+        return None
+    values = np.asarray([value for value, _ in parts], dtype=np.float64)
+    weights = np.asarray([count for _, count in parts], dtype=np.float64)
+    if float(weights.sum()) == 0.0:
+        return None
+    return float(np.average(values, weights=weights))
 
 
 def write_training_plots(
@@ -330,11 +339,6 @@ def write_training_plots(
 ) -> list[Path]:
     if not history:
         return []
-
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
 
     output_dir.mkdir(parents=True, exist_ok=True)
     plot_specs = [
@@ -378,11 +382,12 @@ def _build_loggers(cfg: Any, *, run_name: str, git_commit: str) -> tuple[list[An
         return loggers, None
 
     try:
+        __import__("mlflow")
         from lightning.pytorch.loggers import MLFlowLogger
     except ImportError as exc:
         raise RuntimeError(
             "MLflow logging requires the optional `mlops` extra. "
-            "Install it with `uv sync --extra mlops`."
+            "Install it with `uv sync --extra mlops` or run with `uv run --extra mlops ...`."
         ) from exc
 
     mlflow_logger = MLFlowLogger(
