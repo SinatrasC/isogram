@@ -84,10 +84,11 @@ uv run isogram data data.local_sample_rows=2000 --rebuild=True
 
 ## Training
 
-Start MLflow before normal training because the default config logs to `http://127.0.0.1:8080`:
+Start MLflow before normal training because the default config logs to
+`http://127.0.0.1:8080`. MLflow is provided by the optional `mlops` extra:
 
 ```bash
-uv run mlflow server \
+uv run --extra mlops mlflow server \
   --backend-store-uri sqlite:///mlflow.db \
   --default-artifact-root ./mlruns \
   --host 127.0.0.1 \
@@ -97,19 +98,19 @@ uv run mlflow server \
 Train the baseline:
 
 ```bash
-uv run isogram train model=char_cnn
+uv run --extra mlops isogram train model=char_cnn
 ```
 
 Train the main model:
 
 ```bash
-uv run isogram train model=deberta
+uv run --extra mlops isogram train model=deberta
 ```
 
 Train both configured models:
 
 ```bash
-uv run isogram train_all
+uv run --extra mlops isogram train_all
 ```
 
 For a quick local smoke run without an MLflow server:

@@ -20,7 +20,8 @@ class MlflowRun(AbstractContextManager["MlflowRun"]):
         except ImportError as exc:
             raise RuntimeError(
                 "MLflow logging requires the optional `mlops` extra. "
-                "Install it with `uv sync --extra mlops` or `python -m pip install -e .[mlops]`."
+                "Install it with `uv sync --extra mlops`, run with `uv run --extra mlops ...`, "
+                "or use `python -m pip install -e .[mlops]`."
             ) from exc
 
         self._mlflow = mlflow

@@ -24,6 +24,8 @@ Each run saves the resolved config under `reports/run_configs/`.
 ## MLflow Tracking
 
 Normal training logs to `http://127.0.0.1:8080`. Each run records hyperparameters, the Git commit ID, per-epoch losses and metrics, best metrics, plots, reports, configs, and checkpoints.
+MLflow is installed through the optional `mlops` extra, so use `uv sync --extra mlops`
+or prefix MLflow-backed commands with `uv run --extra mlops`.
 
 For local smoke tests without a server, pass:
 

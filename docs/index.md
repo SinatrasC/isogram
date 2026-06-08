@@ -13,8 +13,8 @@ uv run isogram data
 Train the baseline and main model:
 
 ```bash
-uv run isogram train model=char_cnn
-uv run isogram train model=deberta
+uv run --extra mlops isogram train model=char_cnn
+uv run --extra mlops isogram train model=deberta
 ```
 
 Run a quick local smoke training job without MLflow:
